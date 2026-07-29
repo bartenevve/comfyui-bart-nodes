@@ -1,11 +1,11 @@
 [project]
-name = "comfyui-bart-random"
+name = "comfyui-bart-nodes"
 description = "Nodes with random / sequential selection: images from a local directory or a booru tag search, text prompts from 52prompts.com."
 version = "0.5.0"
 license = { text = "MIT License" }
 
 [project.urls]
-Repository = "https://github.com/bartenevve/comfyui-bart-random"
+Repository = "https://github.com/bartenevve/comfyui-bart-nodes"
 
 [tool.comfy]
 PublisherId = "bartenevve"

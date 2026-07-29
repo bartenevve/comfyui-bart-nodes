@@ -1,4 +1,4 @@
-# comfyui-bart-random
+# comfyui-bart-nodes
 
 Nodes that pick *what* to load for you, instead of making you point at one thing:
 
@@ -12,7 +12,7 @@ The two image nodes live in category `image`, the prompt node in `text`. All thr
 
 ## Install (manual / from archive)
 
-1. Copy/extract the `comfyui-bart-random` folder into `<ComfyUI>/custom_nodes/`
+1. Copy/extract the `comfyui-bart-nodes` folder into `<ComfyUI>/custom_nodes/`
 2. Restart ComfyUI
 
 Dependencies — `torch`, `Pillow`, `aiohttp`, `numpy` — already ship with ComfyUI, no separate install needed. The booru node does its HTTP with the standard library (`urllib`), so it adds nothing either.
@@ -21,13 +21,13 @@ Dependencies — `torch`, `Pillow`, `aiohttp`, `numpy` — already ship with Com
 
 ```bash
 cd <ComfyUI>/custom_nodes
-git clone <your_repo_URL> comfyui-bart-random
+git clone <your_repo_URL> comfyui-bart-nodes
 ```
 
 Update:
 
 ```bash
-cd <ComfyUI>/custom_nodes/comfyui-bart-random
+cd <ComfyUI>/custom_nodes/comfyui-bart-nodes
 git pull
 ```
 
