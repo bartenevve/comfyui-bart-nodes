@@ -1,17 +1,18 @@
-# comfyui-random-image
+# comfyui-bart-random
 
-Two LoadImage-alike nodes that pick *which* image to load for you, instead of making you point at one file:
+Nodes that pick *what* to load for you, instead of making you point at one thing:
 
 | Node | Picks from | Manual / random / stepping |
 | --- | --- | --- |
 | **Load Random Image 🎲** (`LoadRandomImage`) | an **arbitrary directory** on disk (not just the managed `ComfyUI/input`) | filename dropdown / random / next in alphabetical order |
 | **Load Random Booru Image 🎲** (`LoadRandomBooruImage`) | a **booru tag search** (currently Gelbooru) | position in results / random / next position |
+| **Load Random Prompt (52prompts) 🎲** (`LoadRandom52Prompt`) | one of the 20 **text prompt generators** on [52prompts.com](https://52prompts.com/), chosen from a dropdown | seed / random each run |
 
-Both live in category `image`, share the same UI conventions (mode checkboxes, 🎲 button, live preview that survives a workflow reload) and the same advance-after-output semantics.
+The two image nodes live in category `image`, the prompt node in `text`. All three share the same UI conventions (🎲 button that works without executing the graph, preview that survives a workflow reload).
 
 ## Install (manual / from archive)
 
-1. Copy/extract the `comfyui-random-image` folder into `<ComfyUI>/custom_nodes/`
+1. Copy/extract the `comfyui-bart-random` folder into `<ComfyUI>/custom_nodes/`
 2. Restart ComfyUI
 
 Dependencies — `torch`, `Pillow`, `aiohttp`, `numpy` — already ship with ComfyUI, no separate install needed. The booru node does its HTTP with the standard library (`urllib`), so it adds nothing either.
@@ -20,13 +21,13 @@ Dependencies — `torch`, `Pillow`, `aiohttp`, `numpy` — already ship with Com
 
 ```bash
 cd <ComfyUI>/custom_nodes
-git clone <your_repo_URL> comfyui-random-image
+git clone <your_repo_URL> comfyui-bart-random
 ```
 
 Update:
 
 ```bash
-cd <ComfyUI>/custom_nodes/comfyui-random-image
+cd <ComfyUI>/custom_nodes/comfyui-bart-random
 git pull
 ```
 
@@ -102,20 +103,60 @@ Non-image posts (`.mp4`/`.webm`) can't be decoded: in random mode the node retri
 
 ---
 
+## Load Random Prompt (52prompts) 🎲
+
+Outputs a random **text** prompt from one of the generators in 52prompts.com's *Generators* menu — writing prompts, scenarios, character sheets, locations, hobbies, zodiac rolls and so on — as a `STRING` you can wire straight into a CLIP Text Encode.
+
+| Widget | Meaning |
+| --- | --- |
+| `generator` | Which generator to use. Dropdown of all 20, named after the site's own menu entries (`Prompts`, `Scenarios - Two Person`, `Teen Characters`, `Monster Characters`, `Mermaids`, `Zodiac Signs`, …). |
+| `randomize` | Draw a fresh prompt on **every** Queue Prompt. The seed that produced it is written back into `seed`, so a result worth keeping can be reproduced by turning this off. |
+| `seed` | Used when `randomize` is off: the same seed + generator + inputs gives the same prompt, for as long as the site's word lists stay put. |
+| `input_1` … `input_3`, `choice_list` | Only shown for the generators that ask for something. The scenario generators take character names (blank = the generator's own placeholder), the cast one takes a list of names, `Objects`/`Random Choice` take a count. The frontend hides and relabels these per generator, so you never see a field the selected generator ignores. |
+| 🎲 **Generate** | Picks a prompt right now, with a fresh seed. No graph execution needed. |
+| ↧ **Load seed** | Same, but for whatever `seed` currently holds. |
+| preview | The prompt this node last output (persisted with the workflow), plus an info line naming the generator and seed. |
+
+**Outputs:** `prompt` (plain text, multi-line for the character-sheet style generators), `generator`, `seed` (the seed that actually produced this prompt).
+
+### How it works
+
+Each generator on the site is a standalone `.js` file on the site's CDN, holding that generator's word lists **and** the string templating that turns them into a finished prompt. The sentence shapes only exist in the code, so scraping the arrays alone would get half the data — this node runs the file instead.
+
+- **Discovery** — the generator page is fetched and the script URL read out of it (the CDN stamps a version into the path, so it does change over time). Only URLs on the site's CDN host are accepted.
+- **Execution** — `prompts52/jsmini.py` is a small JavaScript interpreter covering exactly the subset those 20 files use: `var`/`if`/`for`, string concatenation, array literals, a handful of `String`/`Array`/`Math` methods and a `document` shim that feeds the node's widgets in as form fields. Anything outside that subset raises an error naming the construct rather than quietly producing nonsense — so if the site rewrites a generator, you get a message instead of a garbled prompt. `Math.random` is wired to a seeded RNG, which is where reproducibility comes from.
+- **Caching** — the page and the script are memoized in memory for an hour, so a workflow queued fifty times fetches once. Requests to a host are serialized with a minimum interval (0.4 s).
+- **No prompt data is stored in this repo.** The word lists are the site's content and are fetched at run time, exactly like the booru node fetches images rather than shipping them. The output HTML (`<br>` between character-sheet fields, the odd `<i>`) is flattened to text.
+
+### Notes
+
+- `Random Choice` shuffles **your own** list (`choice_list`) — it has no word list of its own; it is included because it is in the site's menu.
+- Generators are versioned by the site, not by this pack: a seed reproduces a prompt only as long as the underlying word list is unchanged.
+
+---
+
 ## ⚠️ Security
 
 **Directory node.** The `/random_image/list`, `/random_image/pick` and `/random_image/view` routes accept a `dir` parameter with **no restriction whatsoever** — anyone who can reach ComfyUI's HTTP port (not necessarily through the graph/UI at all — a bare GET request is enough) can list and read the contents of arbitrary files on disk that the ComfyUI process has access to. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug that an allowlist should close.
 
 **Booru node.** It makes **outbound requests to a third-party image board** from the ComfyUI host, and any prompt containing it does so on execution — the booru sees your server's IP and your tag queries. The `/random_booru/*` routes take `source` + `tags` + `index`/`post_id`, never a raw URL, so the host that gets fetched is always derived from the selected source and these endpoints cannot be pointed at an arbitrary target (no SSRF). They are still unauthenticated like everything else here: anyone reaching the port can make your server fetch booru pages and fill the temp cache. Downloaded content is arbitrary third-party imagery, entirely unfiltered by rating (see above), and cached copies stay in ComfyUI's temp directory until it is cleaned.
 
+**52prompts node.** Same outbound-request caveat as the booru node: the site sees your server's IP, and `/random_prompts52/pick` is unauthenticated like everything else here. It takes a generator **label** out of a fixed table, never a URL, and the script URL it ends up fetching must be on the site's CDN host, so these endpoints cannot be pointed at an arbitrary target (no SSRF). The fetched script is **not** executed as JavaScript — it is run by `prompts52/jsmini.py`, which has no filesystem, network or `eval` surface at all: the worst a rewritten generator can do is raise an error or return odd text.
+
 **If ComfyUI is exposed on a LAN or the internet** (not just `127.0.0.1`), keep this in mind and restrict access at the network level (VPN, an authenticating reverse proxy, firewall) rather than assuming ComfyUI or these nodes restrict anything on their own. This isn't unique to this pack either — ComfyUI itself ships with no authentication on any of its endpoints by default.
 
 ## Tests
 
-The pure logic — file selection, booru position selection, and the Gelbooru HTML parsers (against inline fixtures, no network) — is covered by unit tests:
+The pure logic — file selection, booru position selection, the Gelbooru HTML parsers, and the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network) — is covered by unit tests:
 
 ```bash
 python3 -m unittest discover -s tests -v
+```
+
+One extra suite checks that all 20 generators on the live site still run. It is skipped unless you ask for it, since it makes ~40 requests:
+
+```bash
+PROMPTS52_LIVE=1 python3 -m unittest tests.test_prompts52_live -v
 ```
 
 ## Files
@@ -133,9 +174,17 @@ booru/
   sources/base.py       Post dataclass + BooruSource interface
   sources/gelbooru.py   Gelbooru scraper: listing / count / post-page parsing
   sources/__init__.py   name -> backend registry
+prompts52/
+  jsmini.py             tiny JS interpreter: tokenizer, parser, evaluator, document shim
+  catalog.py            the 20 generators: label -> page slug + which widgets it reads
+  runner.py             script discovery, run, HTML -> text
+  fetch.py              urllib GET, per-host throttle, in-memory TTL cache
+  nodes.py              LoadRandom52Prompt
+  routes.py             /random_prompts52/pick, /generators
 js/random_image.js      frontend: file dropdown, randomize button, drag & drop, preview
 js/random_booru.js      frontend: 🎲/↧ buttons, preview, info line, last_post_id persistence
-__init__.py             registration of both nodes (NODE_CLASS_MAPPINGS) and WEB_DIRECTORY
+js/random_prompts52.js  frontend: 🎲/↧ buttons, per-generator widget show/hide, prompt display
+__init__.py             registration of all three nodes (NODE_CLASS_MAPPINGS) and WEB_DIRECTORY
 tests/                  unit tests (_pack.py imports pack submodules without torch)
 ```
 
@@ -143,3 +192,4 @@ tests/                  unit tests (_pack.py imports pack submodules without tor
 
 - Sequential/increment advancement is kept in the ComfyUI process's memory (resets on restart, then simply continues from the last value persisted in the workflow) and isn't synchronized across multiple parallel ComfyUI workers/processes, if you happen to run that (uncommon) setup.
 - The booru node can only address the first 20034 positions of a search, and those positions shift as new posts are uploaded (see above).
+- The 52prompts node depends on the shape of the site's generator scripts. They are hand-written and have been stable for years, but a rewrite that reaches outside the supported JavaScript subset would need `prompts52/jsmini.py` extended — it fails loudly with the offending construct when that happens.

@@ -1,13 +1,13 @@
 [project]
-name = "comfyui-random-image"
-description = "LoadImage-like nodes with random / sequential selection - from a local directory or from a booru tag search."
-version = "0.4.0"
+name = "comfyui-bart-random"
+description = "Nodes with random / sequential selection: images from a local directory or a booru tag search, text prompts from 52prompts.com."
+version = "0.5.0"
 license = { text = "MIT License" }
 
 [project.urls]
-Repository = "https://github.com/bartenevve/comfyui-random-imageload-node"
+Repository = "https://github.com/bartenevve/comfyui-bart-random"
 
 [tool.comfy]
 PublisherId = "bartenevve"
-DisplayName = "Load Random Image"
+DisplayName = "Bart Random Nodes"
 Icon = ""
