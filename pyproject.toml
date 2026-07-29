@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-random-image"
-description = "LoadImage-like node with random / sequential / drag-drop file selection from a directory."
-version = "0.3.0"
+description = "LoadImage-like nodes with random / sequential selection - from a local directory or from a booru tag search."
+version = "0.4.0"
 license = { text = "MIT License" }
 
 [project.urls]
