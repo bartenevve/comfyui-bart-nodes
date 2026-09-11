@@ -71,7 +71,7 @@ Pulls a post from a booru image board by tag search — randomly or by position 
 | ↧ **Load index** | Fetches whatever position `index` currently holds into the preview. The spinner itself doesn't fetch — each step would be a request to a remote site. |
 | preview | Last post that was actually loaded (or the last one a button fetched), plus an info line `#post_id · position / total · rating`. Proxied through ComfyUI, so the browser never talks to the booru directly. |
 
-Same mutual exclusion and same advance-after-output rule as the directory node: a run outputs the post at the position **currently** shown, and the advance happens **after** it, seeding the next run. The pointer lives in server memory keyed by node `unique_id` + source + tags, so a batch count > 1 really walks the list instead of replaying the same snapshotted `index`. `random_post` hides the preview (the shown post is about to be discarded by a fresh pick); `increment_on_queue` keeps it.
+Same mutual exclusion, advance-after-output timing, and batch-race protection as the directory node (see [Load Random Image](#load-random-image-) above) — the pointer here is keyed by `unique_id` + source + tags instead of `unique_id` + directory. `random_post` hides the preview (about to be discarded by a fresh pick); `increment_on_queue` keeps it.
 
 **Outputs:** `IMAGE`, `MASK`, `post_id`, `post_tags` (the post's own tag string), `post_url` (link to the post page), `index` (the position actually used this run).
 
@@ -182,7 +182,7 @@ The `yue2` package's Python API here (`YuE2Pipeline.from_pretrained(...)`, `pipe
 
 **Directory node.** The `/random_image/list`, `/random_image/pick` and `/random_image/view` routes accept a `dir` parameter with **no restriction whatsoever** — anyone who can reach ComfyUI's HTTP port (not necessarily through the graph/UI at all — a bare GET request is enough) can list and read the contents of arbitrary files on disk that the ComfyUI process has access to. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug that an allowlist should close.
 
-**Booru node.** It makes **outbound requests to a third-party image board** from the ComfyUI host, and any prompt containing it does so on execution — the booru sees your server's IP and your tag queries. The `/random_booru/*` routes take `source` + `tags` + `index`/`post_id`, never a raw URL, so the host that gets fetched is always derived from the selected source and these endpoints cannot be pointed at an arbitrary target (no SSRF). They are still unauthenticated like everything else here: anyone reaching the port can make your server fetch booru pages and fill the temp cache. Downloaded content is arbitrary third-party imagery, entirely unfiltered by rating (see above), and cached copies stay in ComfyUI's temp directory until it is cleaned.
+**Booru node.** It makes **outbound requests to a third-party image board** from the ComfyUI host, and any prompt containing it does so on execution — the booru sees your server's IP and your tag queries. The `/random_booru/*` routes take `source` + `tags` + `index`/`post_id`, never a raw URL from the caller. **But this guard is incomplete**: `booru/sources/gelbooru.py`'s file-URL extraction has three fallback regexes, and only the first (`_ORIGINAL_URL`) constrains the host to `gelbooru.com` — the other two (`_OG_IMAGE`, `_MAIN_IMAGE`) accept whatever URL is in the post page's `og:image`/`#image` tag with no host check at all, and nothing downstream re-checks it either. Known issue, not yet fixed. They are also unauthenticated like everything else here: anyone reaching the port can make your server fetch booru pages and fill the temp cache. Downloaded content is arbitrary third-party imagery, entirely unfiltered by rating (see above), and cached copies stay in ComfyUI's temp directory until it is cleaned.
 
 **52prompts node.** Same outbound-request caveat as the booru node: the site sees your server's IP, and `/random_prompts52/pick` is unauthenticated like everything else here. It takes a generator **label** out of a fixed table, never a URL, and the script URL it ends up fetching must be on the site's CDN host, so these endpoints cannot be pointed at an arbitrary target (no SSRF). The fetched script is **not** executed as JavaScript — it is run by `prompts52/jsmini.py`, which has no filesystem, network or `eval` surface at all: the worst a rewritten generator can do is raise an error or return odd text.
 
@@ -225,7 +225,8 @@ prompts52/
   nodes.py              LoadRandom52Prompt
   routes.py             /random_prompts52/pick, /generators
 yue2/
-  nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
+  selection.py          pure logic: artifact-file discovery, generate() kwargs assembly
+  nodes.py              YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
 js/random_image.js      frontend: file dropdown, randomize button, drag & drop, preview
 js/random_booru.js      frontend: 🎲/↧ buttons, preview, info line, last_post_id persistence
 js/random_prompts52.js  frontend: 🎲/↧ buttons, per-generator widget show/hide, prompt display
@@ -239,3 +240,4 @@ tests/                  unit tests (_pack.py imports pack submodules without tor
 - The booru node can only address the first 20034 positions of a search, and those positions shift as new posts are uploaded (see above).
 - The 52prompts node depends on the shape of the site's generator scripts. They are hand-written and have been stable for years, but a rewrite that reaches outside the supported JavaScript subset would need `prompts52/jsmini.py` extended — it fails loudly with the offending construct when that happens.
 - The YuE2 nodes are untested against a real GPU/the actual `yue2` package (see its own section above) — treat the exact API calls as a best-effort port from the model card until someone runs them for real.
+- Booru node: 2 of 3 file-URL fallback regexes in `booru/sources/gelbooru.py` don't validate the host (see Security above) — not yet fixed.
