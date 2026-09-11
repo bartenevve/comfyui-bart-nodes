@@ -59,22 +59,22 @@ Match the conventions already established by the root `nodes.py`:
 
 ### Wiring into the root `__init__.py`
 
+Each node family's import is wrapped in its own `try/except` and adds directly to the shared `NODE_CLASS_MAPPINGS`/`NODE_DISPLAY_NAME_MAPPINGS` dicts, so one sub-package's import failure (a missing optional dependency, a broken environment) only disables that node — it never takes the rest of the pack down with it. This matters even for a sub-package with no unusual dependencies today; you don't control what a future dependency bump breaks. Add a new block following the existing ones:
+
 ```python
-from .nodes import LoadRandomImage
-from .<subpkg>.nodes import <NodeClassName>
-from . import routes  # noqa: F401  registers the aiohttp routes on import
-from .<subpkg> import routes as <subpkg>_routes  # noqa: F401  same, for /<your_prefix>
+try:
+    from .<subpkg>.nodes import <NodeClassName>
+    from .<subpkg> import routes as <subpkg>_routes  # noqa: F401  registers /<your_prefix>
 
-NODE_CLASS_MAPPINGS = {
-    "LoadRandomImage": LoadRandomImage,
-    "<NodeClassName>": <NodeClassName>,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "LoadRandomImage": "Load Random Image \U0001f3b2",
-    "<NodeClassName>": "<Display Name> \U0001f3b2",
-}
+    NODE_CLASS_MAPPINGS["<NodeClassName>"] = <NodeClassName>
+    NODE_DISPLAY_NAME_MAPPINGS["<NodeClassName>"] = "<Display Name> \U0001f3b2"
+except Exception:
+    logger.exception("comfyui-bart-nodes: <NodeClassName> failed to load, skipping it")
 ```
+
+Omit the `routes` import/registration entirely if your sub-package has no aiohttp routes (a node that's just local compute, no frontend browsing/preview UX, doesn't need one — see `yue2/`).
+
+If your dependencies are unusually heavy or non-standard (not on PyPI, needs a specific accelerator, etc.), keep the actual `import` of that dependency *inside* the function that uses it (see `yue2/nodes.py`'s `_get_pipeline()`), not at module level. That way the node class itself still registers and shows up in ComfyUI's node list even when the dependency isn't installed — the user gets a clear error only when they actually try to run it, instead of the node silently not existing.
 
 ### Tests
 

@@ -10,12 +10,14 @@ Nodes that pick *what* to load for you, instead of making you point at one thing
 
 The two image nodes live in category `image`, the prompt node in `text`. All three share the same UI conventions (🎲 button that works without executing the graph, preview that survives a workflow reload).
 
+The pack also has a fourth, differently-shaped set of nodes: **YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `audio/yue2`) wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) for actual music *generation*, not picking from something that already exists — see [its own section](#yue2-music-generation-) below, it has real GPU/dependency requirements the other four nodes don't.
+
 ## Install (manual / from archive)
 
 1. Copy/extract the `comfyui-bart-nodes` folder into `<ComfyUI>/custom_nodes/`
 2. Restart ComfyUI
 
-Dependencies — `torch`, `Pillow`, `aiohttp`, `numpy` — already ship with ComfyUI, no separate install needed. The booru node does its HTTP with the standard library (`urllib`), so it adds nothing either.
+Dependencies for the four picker nodes — `torch`, `Pillow`, `aiohttp`, `numpy` — already ship with ComfyUI, no separate install needed; the booru node does its HTTP with the standard library (`urllib`), so it adds nothing either. **YuE2 needs extra manual setup** — see its own section — but a missing YuE2 dependency only disables the YuE2 nodes, not the rest of the pack (each node family's import is isolated in `__init__.py`; see `CONTRIBUTING.md`).
 
 ## Install via git
 
@@ -135,6 +137,47 @@ Each generator on the site is a standalone `.js` file on the site's CDN, holding
 
 ---
 
+## YuE2 Music Generation 🎵
+
+Wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B): style + lyrics in, a full stereo song out. Three nodes in category `audio/yue2`:
+
+| Node | Does |
+| --- | --- |
+| **YuE2 Model Loader** | Loads the pipeline once (`vae`: `YuE2-Vae` or `YuE2-Vae-legacy`, `device`, default `cuda`). Outputs a `YUE2_PIPELINE` to feed the other two. Cached in memory keyed by `(vae, device)` — ComfyUI can re-execute a loader node far more often than the ~7GB of weights actually need reloading. |
+| **YuE2 Plan Score** | `style` + `lyrics` + `seed` → an editable `abc` (ABC notation) `STRING`, no audio rendered. The starting point for the agentic-editing loop below. |
+| **YuE2 Generate Song** | `style` + `lyrics` + `cot` + `seed` (+ optional `abc`) → `AUDIO` + the `abc` score that produced it. Feed the `AUDIO` output into ComfyUI's own **Save Audio** node. |
+
+### `cot` (composition mode)
+
+- `full` — plan melody and chords, then render. Default, best quality.
+- `melody` — melody-only planning. What the model card recommends for covers.
+- `off` — render directly, no symbolic planning pass.
+
+### Cover and agentic editing are the same call, different arguments
+
+yue2 doesn't have separate cover/edit entry points — both come down to calling `pipeline(...)` with an `abc` score already filled in:
+
+- **Fresh generation**: leave `abc` blank.
+- **Cover**: get an ABC transcription of an existing recording from wherever (**not** included in this pack — we could not confidently pin down "SheetSage2", the tool the model card mentions, to a real package/API; happy to add a transcription node once that's sorted out), feed it into `abc` with `cot="melody"`.
+- **Agentic editing**: `YuE2 Plan Score` → revise the `abc` text (by hand, or via whatever agent/LLM node you wire up — that part is entirely outside yue2 itself) → `YuE2 Generate Song` with the revised `abc` and `cot="full"` → take its `abc` output, revise again, repeat.
+
+### Requirements
+
+- **A CUDA GPU with 24GB+ VRAM** and BF16 support (peak usage is closer to ~11GB, but that's the card's stated minimum). This is a real local-inference node, not a network call — there is no lighter fallback.
+- **The `yue2` inference package** is *not on PyPI*. Download the wheel from the [model repo's file list](https://huggingface.co/m-a-p/YuE2-3B/tree/main) (`yue2_infer-0.1.5-py3-none-any.whl` at the time of writing) and `pip install` that local file into ComfyUI's Python environment.
+- **`torchaudio`** — used to load the rendered FLAC into ComfyUI's `AUDIO` format. Not every ComfyUI install has it; `pip install torchaudio` if `YuE2 Generate Song` errors on import.
+- Model weights download automatically on first load, into the standard Hugging Face hub cache (`~/.cache/huggingface` by default) — not into ComfyUI's own `models/` folder.
+
+### License
+
+Model weights are **CC BY-NC 4.0 — non-commercial use only**. That's a constraint on the weights you download, separate from this pack's own MIT license on the node code itself. See `THIRD_PARTY_NOTICES.md` in the model repo for its own bundled dependencies.
+
+### Exact API surface unverified
+
+The `yue2` package's Python API here (`YuE2Pipeline.from_pretrained(...)`, `pipeline(...)`, `pipeline.plan(...)`, `.save()`/`.save_artifacts()`) was pieced together from the model card, not from running the package — there is no local GPU to test this pack's YuE2 nodes against. `YuE2Generate`/`YuE2Plan` read back whichever `*.abc` file shows up in a temp directory rather than assuming an exact filename, specifically to be robust to that uncertainty, but a real mismatch (a renamed method, a different save-artifact layout) is still possible until someone runs it for real. Please report back what actually happens.
+
+---
+
 ## ⚠️ Security
 
 **Directory node.** The `/random_image/list`, `/random_image/pick` and `/random_image/view` routes accept a `dir` parameter with **no restriction whatsoever** — anyone who can reach ComfyUI's HTTP port (not necessarily through the graph/UI at all — a bare GET request is enough) can list and read the contents of arbitrary files on disk that the ComfyUI process has access to. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug that an allowlist should close.
@@ -181,10 +224,12 @@ prompts52/
   fetch.py              urllib GET, per-host throttle, in-memory TTL cache
   nodes.py              LoadRandom52Prompt
   routes.py             /random_prompts52/pick, /generators
+yue2/
+  nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
 js/random_image.js      frontend: file dropdown, randomize button, drag & drop, preview
 js/random_booru.js      frontend: 🎲/↧ buttons, preview, info line, last_post_id persistence
 js/random_prompts52.js  frontend: 🎲/↧ buttons, per-generator widget show/hide, prompt display
-__init__.py             registration of all three nodes (NODE_CLASS_MAPPINGS) and WEB_DIRECTORY
+__init__.py             registration of all node families, each import isolated (see CONTRIBUTING.md)
 tests/                  unit tests (_pack.py imports pack submodules without torch)
 ```
 
@@ -193,3 +238,4 @@ tests/                  unit tests (_pack.py imports pack submodules without tor
 - Sequential/increment advancement is kept in the ComfyUI process's memory (resets on restart, then simply continues from the last value persisted in the workflow) and isn't synchronized across multiple parallel ComfyUI workers/processes, if you happen to run that (uncommon) setup.
 - The booru node can only address the first 20034 positions of a search, and those positions shift as new posts are uploaded (see above).
 - The 52prompts node depends on the shape of the site's generator scripts. They are hand-written and have been stable for years, but a rewrite that reaches outside the supported JavaScript subset would need `prompts52/jsmini.py` extended — it fails loudly with the offending construct when that happens.
+- The YuE2 nodes are untested against a real GPU/the actual `yue2` package (see its own section above) — treat the exact API calls as a best-effort port from the model card until someone runs them for real.
