@@ -10,14 +10,19 @@ Nodes that pick *what* to load for you, instead of making you point at one thing
 
 The two image nodes live in category `image`, the prompt node in `text`. All three share the same UI conventions (🎲 button that works without executing the graph, preview that survives a workflow reload).
 
-The pack also has two differently-shaped groups of nodes: **Anatomy Defect Filter (Ollama) 🔍** (category `image/quality`, [below](#anatomy-defect-filter-ollama-)) sorts images into passed/failed using an Ollama vision model, and **YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `audio/yue2`) wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) for actual music *generation*, not picking from something that already exists — see [its own section](#yue2-music-generation-) below, it has real GPU/dependency requirements the other four nodes don't.
+Two more groups do something different — they *process* or *generate* rather than pick:
+
+| Node | Does | Needs |
+| --- | --- | --- |
+| **Anatomy Defect Filter (Ollama) 🔍** (`AnatomyDefectFilter`, category `image/quality`) — [details](#anatomy-defect-filter-ollama-) | splits images into `passed` / `failed` by asking an Ollama vision model about anatomy defects (extra limbs, wrong finger count, ...) | an Ollama server with a chat-capable vision model |
+| **YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `audio/yue2`) — [details](#yue2-music-generation-) | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score between planning and rendering | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon, slowly) — real requirements the other nodes don't have |
 
 ## Install (manual / from archive)
 
 1. Copy/extract the `comfyui-bart-nodes` folder into `<ComfyUI>/custom_nodes/`
 2. Restart ComfyUI
 
-Dependencies for the four picker nodes — `torch`, `Pillow`, `aiohttp`, `numpy` — already ship with ComfyUI, no separate install needed; the booru node does its HTTP with the standard library (`urllib`), so it adds nothing either. **YuE2 needs extra manual setup** — see its own section — but a missing YuE2 dependency only disables the YuE2 nodes, not the rest of the pack (each node family's import is isolated in `__init__.py`; see `CONTRIBUTING.md`).
+Dependencies for the picker nodes and the anatomy filter — `torch`, `Pillow`, `aiohttp`, `numpy` — already ship with ComfyUI, no separate install needed; the booru, 52prompts and Ollama clients all use the standard library (`urllib`), so they add nothing either. **YuE2 needs extra manual setup** — see its own section — but a missing YuE2 dependency only disables the YuE2 nodes, not the rest of the pack (each node family's import is isolated in `__init__.py`; see `CONTRIBUTING.md`).
 
 ## Install via git
 
@@ -113,7 +118,7 @@ Outputs a random **text** prompt from one of the generators in 52prompts.com's *
 | --- | --- |
 | `generator` | Which generator to use. Dropdown of all 20, named after the site's own menu entries (`Prompts`, `Scenarios - Two Person`, `Teen Characters`, `Monster Characters`, `Mermaids`, `Zodiac Signs`, …). |
 | `randomize` | Draw a fresh prompt on **every** Queue Prompt. The seed that produced it is written back into `seed`, so a result worth keeping can be reproduced by turning this off. |
-| `seed` | Used when `randomize` is off: the same seed + generator + inputs gives the same prompt, for as long as the site's word lists stay put. |
+| `seed` | Used when `randomize` is off: the same seed + generator + inputs gives the same prompt, for as long as the site's word lists stay put. Seeds go up to 2⁵³−1 — the largest integer the frontend's JS numbers hold exactly, so the seed shown after a randomized run is the seed that really made the prompt. |
 | `input_1` … `input_3`, `choice_list` | Only shown for the generators that ask for something. The scenario generators take character names (blank = the generator's own placeholder), the cast one takes a list of names, `Objects`/`Random Choice` take a count. The frontend hides and relabels these per generator, so you never see a field the selected generator ignores. |
 | 🎲 **Generate** | Picks a prompt right now, with a fresh seed. No graph execution needed. |
 | ↧ **Load seed** | Same, but for whatever `seed` currently holds. |
@@ -141,7 +146,7 @@ Each generator on the site is a standalone `.js` file on the site's CDN, holding
 
 Splits an `IMAGE` (one picture or a batch) into **`passed`** and **`failed`** by asking an [Ollama](https://ollama.com) vision model whether each picture has the anatomy defects you selected — extra or missing limbs, wrong finger count, smeared hands, impossible poses and so on. Wire `failed` into a Save Image node to keep the rejects separately, or just leave it unconnected to throw them away.
 
-It needs a **chat-capable vision model** (`qwen3-vl`, `llama3.2-vision`, `gemma3`, `minicpm-v`, …). A pure embedding model cannot answer "does this hand have six fingers" — it only yields a vector. Use a non-thinking variant: Ollama returns thinking models' answer in a separate field and the node treats an empty answer as an error.
+It needs a **chat-capable vision model** (`qwen3-vl`, `llama3.2-vision`, `gemma3`, `minicpm-v`, …). A pure embedding model cannot answer "does this hand have six fingers" — it only yields a vector. Thinking-capable models (the default `qwen3-vl` tag is one) are handled: the request sends `think: false`, and because qwen3-family models ignore that and still burn their whole token budget thinking, `append_no_think` adds the `/no_think` soft switch to the prompt. If an answer still comes back empty the error says so.
 
 | Widget | Meaning |
 | --- | --- |
@@ -151,7 +156,9 @@ It needs a **chat-capable vision model** (`qwen3-vl`, `llama3.2-vision`, `gemma3
 | `custom_criterion` | Your own defect, in plain words (`a hand holding the cup has no thumb`). Evaluated like the built-in ones. |
 | `confidence_threshold` | The model rates each check with a confidence 0–1; a *found* defect at or above this fails the image. Lower = stricter. |
 | `max_side` | Longest side the image is downscaled to before sending (default 768). Bigger is slower and not always better; hands need enough pixels though. |
-| `timeout`, `seed` | Per-request timeout; seed for the request (temperature is always 0). |
+| `timeout`, `seed` | Per-request timeout; seed for the request (temperature is always 0; the seed is capped at 2³¹−1 because Ollama reads it as a signed integer). |
+| `num_ctx` | Context window requested from Ollama (default 4096, enough for the checklist + one image + a short JSON answer). Pinned because Ollama otherwise sizes it from free memory — 22GB for one image on a 32GB machine, which made `qwen3-vl:8b` crawl at under 1 token/s. |
+| `append_no_think` | Append `/no_think` to the prompt (default on). Needed for qwen3-family models, ignored by others. |
 | `empty_branch` | What a branch with zero images outputs, see below. |
 
 **Outputs:** `passed`, `failed`, `report` (one line per image: `#3 FAIL bad_fingers (0.85): six fingers on left hand`), `report_json` (same, machine-readable), `passed_indices`, `failed_indices` (comma-separated positions in the input batch, e.g. `0,2,5`, to put filtered images back in order). The text outputs are always produced, even when a branch has no images.
@@ -161,7 +168,7 @@ It needs a **chat-capable vision model** (`qwen3-vl`, `llama3.2-vision`, `gemma3
 - `blocker` — the empty output is a ComfyUI `ExecutionBlocker`: every node that depends on it silently doesn't run (a Save Image on `failed` simply does nothing when nothing failed). The catch is that *all* nodes fed by that output are skipped, not just the Save.
 - `placeholder` — the empty output is a single black image the size of the input, so downstream nodes always run. Filter it out yourself if you don't want it saved.
 
-**How a verdict is made.** Each image gets one request: a checklist prompt, the image as base64 JPEG, `format: json`, temperature 0. The answer is parsed tolerantly (code fences, checks nested or top-level); a check the model omits counts as not found, a found defect with no confidence counts as fully confident. An unparsable answer is retried once with a different seed, then the run **fails with an error** — it never quietly marks the image as failed or passed. If Ollama is unreachable or the model is missing, the run also errors with the reason.
+**How a verdict is made.** Each image gets one request: a checklist prompt (each line is a *problem*; `found: true` means it is present in this image — a custom criterion read as an expectation once inverted the verdict), the image as base64 JPEG, `format: json`, temperature 0, at most 1024 answer tokens. The answer is parsed tolerantly (code fences, checks nested or top-level); a check the model omits counts as not found, a found defect with no confidence counts as fully confident, and a confidence given in percent (`85`) is read as 0.85. An unparsable answer is retried once with a different seed, then the run **fails with an error** — it never quietly marks the image as failed or passed. If Ollama is unreachable or the model is missing, the run also errors with the reason.
 
 **Expect imperfect judgement.** Small vision models (7–8B) are unreliable at counting fingers and spotting subtle distortions, in both directions. Try the filter on ~20 images you've already judged by hand and tune `confidence_threshold` / model before filtering anything in bulk. Results for identical inputs and settings are cached by ComfyUI, so re-queuing an unchanged graph doesn't ask the model again.
 
@@ -248,13 +255,13 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 
 ## Tests
 
-The pure logic — file selection, booru position selection, the Gelbooru HTML parsers, the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests:
+The pure logic — file selection, booru position selection, the Gelbooru HTML parsers, the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (176+, no torch, ComfyUI or network needed):
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-One extra suite checks that all 20 generators on the live site still run. It is skipped unless you ask for it, since it makes ~40 requests:
+One extra suite checks that all 20 generators on the live site still run. It is skipped unless you ask for it, since it makes ~40 requests — and it is the check that catches the site changing its scripts (once, a new analytics snippet broke every generator):
 
 ```bash
 PROMPTS52_LIVE=1 python3 -m unittest tests.test_prompts52_live -v
@@ -304,4 +311,3 @@ tests/                  unit tests (_pack.py imports pack submodules without tor
 - The 52prompts node depends on the shape of the site's generator scripts. They are hand-written and have been stable for years, but a rewrite that reaches outside the supported JavaScript subset would need `prompts52/jsmini.py` extended — it fails loudly with the offending construct when that happens.
 - The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed — see the YuE2 section.
 - The anatomy filter has been run end to end in a real ComfyUI against a local Ollama (`qwen3-vl:8b`) on a few synthetic images — enough to show the routing, empty-branch modes and error paths work, not enough to say how well any model spots real six-fingered hands. Judgement quality depends entirely on the vision model you pick; calibrate on your own images.
-- **TODO:** YuE2 isn't a row in the top overview table (line ~5) — it's a generative node, doesn't fit the "picks from" framing the table uses, so it's a prose mention + separate section instead. That's caused confusion (looks like the pack has 3 nodes at a glance). Rework the intro — either a second small table, or restructure the first one to fit both shapes.
