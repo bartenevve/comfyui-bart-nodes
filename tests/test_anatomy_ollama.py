@@ -57,7 +57,10 @@ class TestChat(unittest.TestCase):
         self.assertEqual(body["messages"][0]["images"], ["B64"])
         self.assertEqual(body["format"], "json")
         self.assertFalse(body["stream"])
-        self.assertEqual(body["options"], {"temperature": 0, "seed": 3})
+        self.assertEqual(
+            body["options"], {"temperature": 0, "seed": 3, "num_ctx": 4096, "num_predict": 1024}
+        )
+        self.assertIs(body["think"], False)
 
     def test_http_error_includes_server_message(self):
         error = urllib.error.HTTPError(

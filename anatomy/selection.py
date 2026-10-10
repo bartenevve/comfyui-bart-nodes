@@ -65,6 +65,9 @@ def _as_confidence(value, found):
         # a found defect with no usable confidence counts as fully confident:
         # silently dropping it would let a flagged image through
         return 1.0 if found else 0.0
+    if 1.0 < number <= 100.0:
+        # models asked for 0.0-1.0 sometimes answer in percent ("85")
+        number /= 100.0
     return min(1.0, max(0.0, number))
 
 
@@ -97,6 +100,14 @@ def parse_verdict(text, keys):
     for wrapper in ("checks", "defects"):
         if isinstance(data.get(wrapper), dict):
             data = data[wrapper]
+            break
+        if isinstance(data.get(wrapper), list):
+            # [{"name": "bad_fingers", "found": ...}, ...] instead of a mapping
+            data = {
+                str(item.get("name") or item.get("check") or item.get("type") or item.get("id")): item
+                for item in data[wrapper]
+                if isinstance(item, dict)
+            }
             break
 
     verdict = {}

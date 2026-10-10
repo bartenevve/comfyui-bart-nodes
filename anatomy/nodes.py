@@ -88,7 +88,9 @@ class AnatomyDefectFilter:
                 "confidence_threshold": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "max_side": ("INT", {"default": 768, "min": 128, "max": 4096, "step": 64}),
                 "timeout": ("INT", {"default": 120, "min": 5, "max": 3600}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "num_ctx": ("INT", {"default": 4096, "min": 2048, "max": 32768, "step": 512}),
+                # Ollama reads the seed as a signed 64-bit int; keep well inside that
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0x7FFFFFFF}),
                 "empty_branch": (EMPTY_BRANCH_MODES, {"default": EMPTY_BRANCH_MODES[0]}),
             },
         }
@@ -107,6 +109,7 @@ class AnatomyDefectFilter:
         confidence_threshold,
         max_side,
         timeout,
+        num_ctx,
         seed,
         empty_branch,
         **checks,
@@ -120,7 +123,7 @@ class AnatomyDefectFilter:
         for index in range(count):
             _check_interrupted()
             image_b64 = _tensor_to_b64(images[index], max_side)
-            verdict = self._ask(ollama_url, model, prompt, image_b64, keys, timeout, seed, index)
+            verdict = self._ask(ollama_url, model, prompt, image_b64, keys, timeout, num_ctx, seed, index)
             passed, failed_checks = decide(verdict, confidence_threshold)
             results.append(
                 {"index": index, "passed": passed, "failed_checks": failed_checks, "checks": verdict}
@@ -150,12 +153,12 @@ class AnatomyDefectFilter:
         )
 
     @staticmethod
-    def _ask(url, model, prompt, image_b64, keys, timeout, seed, index):
+    def _ask(url, model, prompt, image_b64, keys, timeout, num_ctx, seed, index):
         last_error = None
         for attempt in range(VERDICT_ATTEMPTS):
             # a different seed on the retry: same seed + same image would
             # just reproduce the same unparsable answer
-            answer = ollama.chat(url, model, prompt, image_b64, timeout=timeout, seed=seed + attempt)
+            answer = ollama.chat(url, model, prompt, image_b64, timeout=timeout, seed=seed + attempt, num_ctx=num_ctx)
             try:
                 return parse_verdict(answer, keys)
             except VerdictError as exc:
@@ -168,27 +171,31 @@ class AnatomyDefectFilter:
     @classmethod
     def VALIDATE_INPUTS(
         cls,
-        ollama_url,
-        model,
-        custom_criterion,
-        extra_limbs=False,
-        missing_limbs=False,
-        bad_fingers=False,
-        smeared_limbs=False,
-        impossible_pose=False,
-        face_deformation=False,
-        merged_bodies=False,
+        ollama_url=None,
+        model=None,
+        custom_criterion=None,
+        extra_limbs=None,
+        missing_limbs=None,
+        bad_fingers=None,
+        smeared_limbs=None,
+        impossible_pose=None,
+        face_deformation=None,
+        merged_bodies=None,
     ):
-        # listed explicitly rather than **kwargs: a catch-all makes ComfyUI
-        # skip its own type/range validation for every other input too.
+        # Parameters are listed explicitly rather than **kwargs (a catch-all
+        # makes ComfyUI skip its own type/range validation for every other
+        # input too) and default to None: an input wired from another node has
+        # no value at validation time, and what can't be known isn't checked.
         # Keep in step with selection.CHECKS.
         checks = {key: value for key, value in locals().items() if key in CHECKS}
-        try:
-            ollama.normalize_url(ollama_url)
-        except ollama.OllamaError as exc:
-            return str(exc)
-        if not model.strip():
+        if ollama_url is not None:
+            try:
+                ollama.normalize_url(ollama_url)
+            except ollama.OllamaError as exc:
+                return str(exc)
+        if model is not None and not model.strip():
             return "model is empty"
-        if not selected_keys({key for key in CHECKS if checks.get(key)}, custom_criterion):
-            return "enable at least one defect check or fill in custom_criterion"
+        if custom_criterion is not None and all(value is not None for value in checks.values()):
+            if not selected_keys({key for key, value in checks.items() if value}, custom_criterion):
+                return "enable at least one defect check or fill in custom_criterion"
         return True

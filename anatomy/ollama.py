@@ -18,12 +18,18 @@ def normalize_url(url):
     return url.rstrip("/")
 
 
-def chat(url, model, prompt, image_b64, timeout=120, seed=0):
+def chat(url, model, prompt, image_b64, timeout=120, seed=0, num_ctx=4096):
     """One-shot vision question to Ollama's /api/chat, returns the answer text.
 
     Temperature 0 plus a fixed seed keeps repeated runs on the same image as
     stable as the model allows; `format: json` makes Ollama constrain the
-    answer to valid JSON.
+    answer to valid JSON. `think: false` matters for thinking-capable models
+    (qwen3-vl's default tag is one): left on, the answer arrives in a separate
+    `thinking` field after a long ramble and `content` stays empty. `num_ctx`
+    is pinned small because Ollama otherwise sizes the context from free
+    memory - tens of GB on a big machine - which makes a one-image question
+    needlessly slow; a checklist prompt + one image + a short JSON answer fit
+    in 4096 comfortably.
     """
     endpoint = normalize_url(url) + "/api/chat"
     body = json.dumps(
@@ -32,7 +38,8 @@ def chat(url, model, prompt, image_b64, timeout=120, seed=0):
             "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0, "seed": seed},
+            "think": False,
+            "options": {"temperature": 0, "seed": seed, "num_ctx": num_ctx, "num_predict": 1024},
         }
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -62,6 +69,6 @@ def chat(url, model, prompt, image_b64, timeout=120, seed=0):
     if not content.strip():
         raise OllamaError(
             f"ollama returned an empty answer from model {model!r} "
-            "(a thinking-mode model? use a non-thinking variant)"
+            "(it may have run out of tokens while thinking)"
         )
     return content

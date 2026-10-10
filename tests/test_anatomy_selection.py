@@ -59,8 +59,24 @@ class TestParseVerdict(unittest.TestCase):
         self.assertEqual(verdict["extra_limbs"]["confidence"], 1.0)
 
     def test_confidence_is_clamped(self):
-        verdict = sel.parse_verdict(verdict_json(extra_limbs={"found": True, "confidence": 7}), ["extra_limbs"])
+        verdict = sel.parse_verdict(verdict_json(extra_limbs={"found": True, "confidence": 150}), ["extra_limbs"])
         self.assertEqual(verdict["extra_limbs"]["confidence"], 1.0)
+        verdict = sel.parse_verdict(verdict_json(extra_limbs={"found": True, "confidence": -2}), ["extra_limbs"])
+        self.assertEqual(verdict["extra_limbs"]["confidence"], 0.0)
+
+    def test_percent_confidence_is_scaled_not_clamped(self):
+        verdict = sel.parse_verdict(verdict_json(extra_limbs={"found": True, "confidence": 85}), ["extra_limbs"])
+        self.assertAlmostEqual(verdict["extra_limbs"]["confidence"], 0.85)
+        verdict = sel.parse_verdict(verdict_json(extra_limbs={"found": True, "confidence": 5}), ["extra_limbs"])
+        self.assertAlmostEqual(verdict["extra_limbs"]["confidence"], 0.05)
+
+    def test_checks_given_as_list_of_objects(self):
+        text = json.dumps(
+            {"checks": [{"name": "bad_fingers", "found": True, "confidence": 0.7, "note": "six"}, "junk"]}
+        )
+        verdict = sel.parse_verdict(text, ["bad_fingers", "extra_limbs"])
+        self.assertTrue(verdict["bad_fingers"]["found"])
+        self.assertFalse(verdict["extra_limbs"]["found"])
 
     def test_check_left_out_counts_as_not_found(self):
         text = verdict_json(extra_limbs={"found": False, "confidence": 0.0})
