@@ -48,7 +48,7 @@ Restart ComfyUI after installing/updating.
 
 The two checkboxes are mutually exclusive in the UI, and the server also rejects the queue if both end up enabled at once (guards against a hand-edited workflow.json).
 
-**Sequential semantics:** a given run outputs the file **currently** selected (the one already shown in the preview), and the advance to the next one happens **after** — preparing the starting point for the next run. The advance is tracked in server memory per node `unique_id` + `directory`, which also protects against a batch-queue race (several runs queued before the first one finishes don't end up loading the same file repeatedly).
+**Sequential semantics:** a given run outputs the file **currently** selected (the one already shown in the preview), and the advance to the next one happens **after** — preparing the starting point for the next run. The advance is tracked in server memory per node `unique_id` + `directory`, together with the `filename` the previous run was given. That protects against a batch-queue race (several runs queued before the first one finishes all carry the same stale `filename`; they follow the pointer instead of loading the same file repeatedly) while still honoring the widget: if `filename` differs from last time — you picked another file, rolled the dice, or reloaded a workflow — the file shown in the widget is the one that loads.
 
 The node's preview shows what **actually** got loaded on the last run (survives saving/reopening the workflow), not what's queued up next — except while `randomize_on_queue` is checked, where it's hidden regardless, since that value is about to be discarded anyway.
 
@@ -208,6 +208,25 @@ The `yue2` package's Python API here (`YuE2Pipeline.from_pretrained(...)`, `pipe
 
 ---
 
+## Example workflows
+
+`example_workflows/` holds a ready-to-load graph for every node. ComfyUI lists them itself under **Templates → comfyui-bart-nodes**, or drag a `.json` onto the canvas. Each has a Note explaining what to set; the image examples ship with the placeholder `directory` `/path/to/your/images`, which you must point at a real folder before running.
+
+| File | Shows |
+| --- | --- |
+| `01_load_random_image.json` | Load Random Image: manual pick / dice / drag & drop / `randomize_on_queue` |
+| `02_sequential_images.json` | `sequential_on_queue`: one step per Queue, also with a batch count > 1 |
+| `03_random_booru.json` | Load Random Booru Image with a `rating:general` tag search |
+| `04_random_prompt_52prompts.json` | Load Random Prompt (52prompts) into a text preview |
+| `05_anatomy_filter.json` | Directory loader → Anatomy Defect Filter → `passed` preview, `failed` saved to `output/rejected/`, report |
+| `06_yue2_text_to_song.json` | YuE2 Model Loader → Generate Song → Save Audio |
+| `07_yue2_plan_edit_generate.json` | YuE2 plan → editable ABC score → generate (the agentic-editing loop) |
+| `08_yue2_cover_from_abc.json` | YuE2 cover mode: an externally obtained ABC transcription + `cot=melody` |
+
+01–05 were loaded back into a real ComfyUI frontend and run from its Run button; 06–08 load fine but need the `yue2` package and a big GPU to execute (see the YuE2 section).
+
+---
+
 ## ⚠️ Security
 
 **Directory node.** The `/random_image/list`, `/random_image/pick` and `/random_image/view` routes accept a `dir` parameter with **no restriction whatsoever** — anyone who can reach ComfyUI's HTTP port (not necessarily through the graph/UI at all — a bare GET request is enough) can list and read the contents of arbitrary files on disk that the ComfyUI process has access to. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug that an allowlist should close.
@@ -267,6 +286,7 @@ js/random_image.js      frontend: file dropdown, randomize button, drag & drop, 
 js/random_booru.js      frontend: 🎲/↧ buttons, preview, info line, last_post_id persistence
 js/random_prompts52.js  frontend: 🎲/↧ buttons, per-generator widget show/hide, prompt display
 __init__.py             registration of all node families, each import isolated (see CONTRIBUTING.md)
+example_workflows/     one ready-to-load graph per node (listed by ComfyUI under Templates)
 tests/                  unit tests (_pack.py imports pack submodules without torch)
 ```
 
@@ -276,6 +296,6 @@ tests/                  unit tests (_pack.py imports pack submodules without tor
 - The booru node can only address the first 20034 positions of a search, and those positions shift as new posts are uploaded (see above).
 - The 52prompts node depends on the shape of the site's generator scripts. They are hand-written and have been stable for years, but a rewrite that reaches outside the supported JavaScript subset would need `prompts52/jsmini.py` extended — it fails loudly with the offending construct when that happens.
 - The YuE2 nodes are untested against a real GPU/the actual `yue2` package (see its own section above) — treat the exact API calls as a best-effort port from the model card until someone runs them for real.
-- The anatomy filter is only unit-tested for its parsing/decision logic and the Ollama client (against a mocked server); the node itself (tensor handling, `ExecutionBlocker`) hasn't been run in a real ComfyUI yet, and judgement quality depends entirely on the vision model you pick.
+- The anatomy filter has been run end to end in a real ComfyUI against a local Ollama (`qwen3-vl:8b`) on a few synthetic images — enough to show the routing, empty-branch modes and error paths work, not enough to say how well any model spots real six-fingered hands. Judgement quality depends entirely on the vision model you pick; calibrate on your own images.
 - **TODO:** YuE2 isn't a row in the top overview table (line ~5) — it's a generative node, doesn't fit the "picks from" framing the table uses, so it's a prose mention + separate section instead. That's caused confusion (looks like the pack has 3 nodes at a glance). Rework the intro — either a second small table, or restructure the first one to fit both shapes.
 - Booru node: 2 of 3 file-URL fallback regexes in `booru/sources/gelbooru.py` don't validate the host (see Security above) — not yet fixed.
