@@ -1,7 +1,16 @@
 import numpy as np
 import torch
 
-from .selection import VAE_REPOS, backend_for, build_generate_kwargs, generate_error, vae_repo
+from .selection import (
+    DEFAULT_MAX_ABC_TOKENS,
+    DEFAULT_MAX_SEMANTIC_TOKENS,
+    VAE_REPOS,
+    backend_for,
+    build_generate_kwargs,
+    generate_error,
+    sampling_overrides,
+    vae_repo,
+)
 
 MODEL_ID = "m-a-p/YuE2-3B"
 VAE_CHOICES = list(VAE_REPOS)
@@ -56,6 +65,32 @@ def _cancelled():
         return False
 
 
+MPS_TRIM_EVERY = 32  # tokens
+
+
+def _mps_cache_trimmer():
+    """on_token callback that keeps Apple's MPS allocator from eating all memory.
+
+    The eager decoding loop allocates fresh tensors every token and the MPS
+    driver keeps the freed buffers: measured on a 32GB Mac, driver memory
+    grew linearly (8GB -> 25GB in ~2000 tokens) while live tensors stayed at
+    7.4GB, until macOS killed the process with its "out of application
+    memory" dialog. Releasing the cache every few tokens keeps it flat. No-op
+    off Apple silicon.
+    """
+    if not torch.backends.mps.is_available():
+        return None
+    count = 0
+
+    def trim(_phase, _token):
+        nonlocal count
+        count += 1
+        if count % MPS_TRIM_EVERY == 0:
+            torch.mps.empty_cache()
+
+    return trim
+
+
 def _run_interruptible(call, *args, **kwargs):
     """Run a yue2 call so the Cancel button stops it.
 
@@ -63,6 +98,9 @@ def _run_interruptible(call, *args, **kwargs):
     ComfyUI expects its own exception type to treat that as a user interrupt
     rather than a node failure.
     """
+    trimmer = _mps_cache_trimmer()
+    if trimmer is not None:
+        kwargs["on_token"] = trimmer
     try:
         return call(*args, cancelled=_cancelled, **kwargs)
     except InterruptedError:
@@ -122,6 +160,9 @@ class YuE2Plan:
                 "lyrics": ("STRING", {"default": "", "multiline": True}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": MAX_SEED}),
             },
+            "optional": {
+                "max_abc_tokens": ("INT", {"default": DEFAULT_MAX_ABC_TOKENS, "min": 256, "max": DEFAULT_MAX_ABC_TOKENS}),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -129,8 +170,11 @@ class YuE2Plan:
     FUNCTION = "plan"
     CATEGORY = "audio/yue2"
 
-    def plan(self, pipeline, style, lyrics, seed):
-        plan = _run_interruptible(pipeline.plan, style=style, lyrics=lyrics, cot="full", seed=seed)
+    def plan(self, pipeline, style, lyrics, seed, max_abc_tokens=DEFAULT_MAX_ABC_TOKENS):
+        plan = _run_interruptible(
+            pipeline.plan, style=style, lyrics=lyrics, cot="full", seed=seed,
+            **sampling_overrides(max_abc_tokens=max_abc_tokens),
+        )
         return (plan.abc or "",)
 
 
@@ -157,6 +201,12 @@ class YuE2Generate:
             },
             "optional": {
                 "abc": ("STRING", {"default": "", "multiline": True}),
+                # hard caps on how much is generated (truncate, not shorten - see README)
+                "max_abc_tokens": ("INT", {"default": DEFAULT_MAX_ABC_TOKENS, "min": 256, "max": DEFAULT_MAX_ABC_TOKENS}),
+                "max_semantic_tokens": (
+                    "INT",
+                    {"default": DEFAULT_MAX_SEMANTIC_TOKENS, "min": 256, "max": DEFAULT_MAX_SEMANTIC_TOKENS},
+                ),
             },
         }
 
@@ -172,8 +222,12 @@ class YuE2Generate:
             return True
         return generate_error(cot, abc) or True
 
-    def generate(self, pipeline, style, lyrics, cot, seed, abc=""):
+    def generate(
+        self, pipeline, style, lyrics, cot, seed, abc="",
+        max_abc_tokens=DEFAULT_MAX_ABC_TOKENS, max_semantic_tokens=DEFAULT_MAX_SEMANTIC_TOKENS,
+    ):
         kwargs = build_generate_kwargs(style, lyrics, cot, seed, abc)
+        kwargs.update(sampling_overrides(max_abc_tokens, max_semantic_tokens))
         song = _run_interruptible(pipeline, **kwargs)
         # with cot=off there is no score; hand back what came in so a chained
         # node still gets a string

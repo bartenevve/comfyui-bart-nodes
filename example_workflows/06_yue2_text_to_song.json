@@ -25,7 +25,7 @@
         "YuE2 text-to-song (m-a-p/YuE2-3B). Needs the `yue2` wheel installed in ComfyUI's Python (not on PyPI - see the pack README). Official target is a 24GB NVIDIA GPU; device=auto also picks Apple Silicon (MPS), much slower. Weights are CC BY-NC 4.0 (non-commercial).\ncot=full plans melody+chords first, then renders; leave `abc` empty for a fresh generation."
       ],
       "widgets_values_named": {
-        "text": "YuE2 text-to-song (m-a-p/YuE2-3B). Requires a CUDA GPU with 24GB+ VRAM, the `yue2` wheel installed in ComfyUI's Python (not on PyPI - see the pack README) and torchaudio. Weights are CC BY-NC 4.0 (non-commercial). Not verified on a real GPU yet.\ncot=full plans melody+chords first, then renders; leave `abc` empty for a fresh generation."
+        "text": "YuE2 text-to-song (m-a-p/YuE2-3B). Needs the `yue2` wheel installed in ComfyUI's Python (not on PyPI - see the pack README). Official target is a 24GB NVIDIA GPU; device=auto also runs on Apple silicon (MPS), ~13 min for a 98 s song. Short lyrics = short song. Weights are CC BY-NC 4.0 (non-commercial).\ncot=full plans melody+chords first, then renders; leave `abc` empty for a fresh generation."
       },
       "color": "#432",
       "bgcolor": "#653"

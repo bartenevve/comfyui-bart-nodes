@@ -173,9 +173,9 @@ Wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B): style + lyrics in, 
 
 | Node | Does |
 | --- | --- |
-| **YuE2 Model Loader** | Loads the pipeline once (`vae`: `YuE2-Vae` or `YuE2-Vae-legacy`, `device`, default `cuda`). Outputs a `YUE2_PIPELINE` to feed the other two. Cached in memory keyed by `(vae, device)` — ComfyUI can re-execute a loader node far more often than the ~7GB of weights actually need reloading. |
+| **YuE2 Model Loader** | Loads the pipeline once (`vae`: `YuE2-Vae` or `YuE2-Vae-legacy`, `device`, default `auto` = CUDA, else Apple MPS, else CPU). Outputs a `YUE2_PIPELINE` to feed the other two. Cached in memory keyed by `(vae, device)` — ComfyUI can re-execute a loader node far more often than the ~7GB of weights actually need reloading. |
 | **YuE2 Plan Score** | `style` + `lyrics` + `seed` → an editable `abc` (ABC notation) `STRING`, no audio rendered. The starting point for the agentic-editing loop below. |
-| **YuE2 Generate Song** | `style` + `lyrics` + `cot` + `seed` (+ optional `abc`) → `AUDIO` + the `abc` score that produced it. Feed the `AUDIO` output into ComfyUI's own **Save Audio** node. |
+| **YuE2 Generate Song** | `style` + `lyrics` + `cot` + `seed` (+ optional `abc`, `max_abc_tokens`, `max_semantic_tokens`) → `AUDIO` + the `abc` score that produced it. Feed the `AUDIO` output into ComfyUI's own **Save Audio** node. |
 
 ### `cot` (composition mode)
 
@@ -193,18 +193,25 @@ yue2 doesn't have separate cover/edit entry points — both come down to calling
 
 ### Requirements
 
-- **A CUDA GPU with 24GB+ VRAM** and BF16 support (peak usage is closer to ~11GB, but that's the card's stated minimum). This is a real local-inference node, not a network call — there is no lighter fallback.
-- **The `yue2` inference package** is *not on PyPI*. Download the wheel from the [model repo's file list](https://huggingface.co/m-a-p/YuE2-3B/tree/main) (`yue2_infer-0.1.5-py3-none-any.whl` at the time of writing) and `pip install` that local file into ComfyUI's Python environment.
-- **`torchaudio`** — used to load the rendered FLAC into ComfyUI's `AUDIO` format. Not every ComfyUI install has it; `pip install torchaudio` if `YuE2 Generate Song` errors on import.
-- Model weights download automatically on first load, into the standard Hugging Face hub cache (`~/.cache/huggingface` by default) — not into ComfyUI's own `models/` folder.
+- **Hardware.** The official target is a **24GB NVIDIA GPU** (BF16), ~70 s for a 3.6-minute song on an RTX 4090. `device=auto` also runs on **Apple silicon (MPS)** — verified here on a 32GB M-series Mac — but expect ~13 tokens/s: a 98-second power-metal track took about **13 minutes** (2.6 min planning, ~10 min audio) and ~11GB of memory. CPU works in principle and is far slower still. This is local inference, not a network call.
+- **The `yue2` inference package** is *not on PyPI* and pins `torch==2.10.0`, `transformers==4.57.6` and a few more. Download the wheel from the [model repo's file list](https://huggingface.co/m-a-p/YuE2-3B/tree/main) (`yue2_infer-0.1.5-py3-none-any.whl` at the time of writing) and `pip install` that file. If your ComfyUI already has a different torch/transformers, that install will change them — consider a separate environment if you can't afford that.
+- Model weights (7.3GB + a 0.5GB VAE) download automatically on first load, into the standard Hugging Face hub cache (`~/.cache/huggingface` by default) — not into ComfyUI's own `models/` folder. Check you have the disk space; if the download stalls on the new `xet` backend, retry with `HF_HUB_DISABLE_XET=1`.
 
 ### License
 
 Model weights are **CC BY-NC 4.0 — non-commercial use only**. That's a constraint on the weights you download, separate from this pack's own MIT license on the node code itself. See `THIRD_PARTY_NOTICES.md` in the model repo for its own bundled dependencies.
 
-### Exact API surface unverified
+### Making a shorter track
 
-The `yue2` package's Python API here (`YuE2Pipeline.from_pretrained(...)`, `pipeline(...)`, `pipeline.plan(...)`, `.save()`/`.save_artifacts()`) was pieced together from the model card, not from running the package — there is no local GPU to test this pack's YuE2 nodes against. `YuE2Generate`/`YuE2Plan` read back whichever `*.abc` file shows up in a temp directory rather than assuming an exact filename, specifically to be robust to that uncertainty, but a real mismatch (a renamed method, a different save-artifact layout) is still possible until someone runs it for real. Please report back what actually happens.
+The song's length comes from the plan, and the plan from your lyrics: a few lines of `[chorus]` give a ~1.5-minute track, a full verse + chorus + bridge a lot more (and a plan of 4000+ tokens). **Write less lyrics to get a shorter song.** `max_abc_tokens` (default 4096) and `max_semantic_tokens` (default 9000) are hard caps on how much is generated, which bound worst-case time and memory — but hitting one *truncates* the plan or the audio mid-way rather than shortening it gracefully.
+
+### Apple silicon: memory
+
+On MPS the eager decoding loop leaks allocator cache: measured driver memory grew from 8GB to 25GB over ~2000 tokens while live tensors stayed at 7.4GB, until macOS killed the process ("your system has run out of application memory", even though Activity Monitor shows free memory — and with a nearly full disk macOS can't grow swap either). The nodes release the cache every 32 tokens, which keeps it flat at ~8–11GB. Close other heavy apps anyway.
+
+### What has and hasn't been verified
+
+The wrapper was checked against the `yue2` 0.1.5 source and run through the real package on Apple MPS (loader → plan → generate; the Generate node's `AUDIO` output holds a 98 s stereo 48 kHz waveform, the plan is valid ABC at the requested tempo). **Not** verified: running on CUDA, and running inside a ComfyUI graph with the real package (the test harness imported the node functions in a standalone environment, because yue2's torch pin differs from a current ComfyUI's).
 
 ---
 
@@ -295,6 +302,6 @@ tests/                  unit tests (_pack.py imports pack submodules without tor
 - Sequential/increment advancement is kept in the ComfyUI process's memory (resets on restart, then simply continues from the last value persisted in the workflow) and isn't synchronized across multiple parallel ComfyUI workers/processes, if you happen to run that (uncommon) setup.
 - The booru node can only address the first 20034 positions of a search, and those positions shift as new posts are uploaded (see above).
 - The 52prompts node depends on the shape of the site's generator scripts. They are hand-written and have been stable for years, but a rewrite that reaches outside the supported JavaScript subset would need `prompts52/jsmini.py` extended — it fails loudly with the offending construct when that happens.
-- The YuE2 nodes are untested against a real GPU/the actual `yue2` package (see its own section above) — treat the exact API calls as a best-effort port from the model card until someone runs them for real.
+- The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed — see the YuE2 section.
 - The anatomy filter has been run end to end in a real ComfyUI against a local Ollama (`qwen3-vl:8b`) on a few synthetic images — enough to show the routing, empty-branch modes and error paths work, not enough to say how well any model spots real six-fingered hands. Judgement quality depends entirely on the vision model you pick; calibrate on your own images.
 - **TODO:** YuE2 isn't a row in the top overview table (line ~5) — it's a generative node, doesn't fit the "picks from" framing the table uses, so it's a prose mention + separate section instead. That's caused confusion (looks like the pack has 3 nodes at a glance). Rework the intro — either a second small table, or restructure the first one to fit both shapes.

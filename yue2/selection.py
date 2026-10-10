@@ -37,3 +37,22 @@ def build_generate_kwargs(style, lyrics, cot, seed, abc=""):
     if abc and abc.strip():
         kwargs["abc"] = abc
     return kwargs
+
+
+DEFAULT_MAX_ABC_TOKENS = 4096
+DEFAULT_MAX_SEMANTIC_TOKENS = 9000
+
+
+def sampling_overrides(max_abc_tokens=None, max_semantic_tokens=None):
+    """pipeline() keyword overrides for the token budgets, only for what differs.
+
+    A budget is a hard cap, not a target: hitting it truncates the plan or the
+    audio mid-way. Shortening the lyrics is what actually shortens a song; the
+    caps bound worst-case time and memory.
+    """
+    overrides = {}
+    if max_abc_tokens is not None and max_abc_tokens != DEFAULT_MAX_ABC_TOKENS:
+        overrides["abc_sampling"] = {"max_tokens": int(max_abc_tokens)}
+    if max_semantic_tokens is not None and max_semantic_tokens != DEFAULT_MAX_SEMANTIC_TOKENS:
+        overrides["semantic_sampling"] = {"max_tokens": int(max_semantic_tokens)}
+    return overrides

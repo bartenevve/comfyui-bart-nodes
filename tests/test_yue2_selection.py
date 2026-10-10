@@ -50,5 +50,18 @@ class TestBuildGenerateKwargs(unittest.TestCase):
         self.assertEqual(kwargs["cot"], "melody")
 
 
+class TestSamplingOverrides(unittest.TestCase):
+    def test_defaults_add_nothing(self):
+        self.assertEqual(selection.sampling_overrides(), {})
+        self.assertEqual(selection.sampling_overrides(4096, 9000), {})
+
+    def test_only_changed_budgets_are_passed(self):
+        self.assertEqual(selection.sampling_overrides(1200, 9000), {"abc_sampling": {"max_tokens": 1200}})
+        self.assertEqual(
+            selection.sampling_overrides(1200, 3000),
+            {"abc_sampling": {"max_tokens": 1200}, "semantic_sampling": {"max_tokens": 3000}},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
