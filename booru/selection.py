@@ -23,15 +23,16 @@ def resolve_index(
     has already been output, never before.
 
     Increment mode keeps an in-memory pointer keyed by (unique_id, search_key)
-    as the source of truth once seeded from `index`. Without it, queuing
-    several executions back-to-back (e.g. a batch count > 1) would have every
-    one of them read the same `index` snapshotted at queue time and all load
-    the same post instead of advancing - the in-memory pointer is only visible
-    to executions that have actually run, so each one sees the real advance
-    made by the one before it. `search_key` (source + tags) is folded into the
-    key since ComfyUI's unique_id is just a small per-graph integer, not
-    globally unique - two unrelated workflows reusing the same node id would
-    otherwise share (and corrupt) each other's pointer.
+    next to the `index` that run was given. Without a pointer, queuing several
+    executions back-to-back (e.g. a batch count > 1) would have every one of
+    them read the same `index` snapshotted at queue time and all load the same
+    post instead of advancing. So a run arriving with the SAME `index` as the
+    previous run is such a snapshot - follow the pointer. A different `index`
+    means the widget moved since (manual pick, the frontend syncing in the
+    advance, a reloaded workflow) and the widget wins. `search_key` (source +
+    tags) is folded into the key since ComfyUI's unique_id is just a small
+    per-graph integer, not globally unique - two unrelated workflows reusing
+    the same node id would otherwise share (and corrupt) each other's pointer.
     """
     if total <= 0:
         raise ValueError("empty result list")
@@ -45,10 +46,15 @@ def resolve_index(
     if increment_on_queue:
         key = (unique_id, search_key)
         with _INCREMENT_LOCK:
-            current = state.get(key)
-            chosen = current if _in_range(current, total) else (index if _in_range(index, total) else 0)
+            pointer, seen = state.get(key, (None, None))
+            if _in_range(pointer, total) and seen == index:
+                chosen = pointer
+            elif _in_range(index, total):
+                chosen = index
+            else:
+                chosen = pointer if _in_range(pointer, total) else 0
             next_index = (chosen + 1) % total
-            state[key] = next_index
+            state[key] = (next_index, index)
         return chosen, next_index
 
     chosen = index if _in_range(index, total) else 0

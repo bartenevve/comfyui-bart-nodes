@@ -31,15 +31,18 @@ def resolve_filenames(
     file has already been output, never before.
 
     Sequential mode keeps an in-memory pointer keyed by (unique_id, directory)
-    as the source of truth once seeded from `filename`. Without it, queuing
+    next to the `filename` that run was given. Without a pointer, queuing
     several executions back-to-back (e.g. a batch count > 1) would have every
     one of them read the same `filename` snapshotted at queue time and all
-    load the same file instead of advancing - the in-memory pointer is only
-    visible to executions that have actually run, so each one sees the real
-    advance made by the one before it. `directory` is folded into the key
-    since ComfyUI's unique_id is just a small per-graph integer, not globally
-    unique - two unrelated workflows reusing the same node id would otherwise
-    share (and corrupt) each other's sequential pointer.
+    load the same file instead of advancing. So when a run arrives with the
+    SAME `filename` as the previous run, it is such a snapshot - follow the
+    pointer. When `filename` differs, the widget has moved since (a manual pick
+    or dice roll, the frontend syncing in the advance, a reloaded workflow) and
+    the widget wins: the file the user is looking at is the file that loads.
+    `directory` is folded into the key since ComfyUI's unique_id is just a
+    small per-graph integer, not globally unique - two unrelated workflows
+    reusing the same node id would otherwise share (and corrupt) each other's
+    pointer.
     """
     if state is None:
         state = _SEQUENTIAL_STATE
@@ -51,10 +54,15 @@ def resolve_filenames(
     if sequential_on_queue:
         key = (unique_id, directory)
         with _SEQUENTIAL_LOCK:
-            current = state.get(key)
-            chosen = current if current in files else (filename if filename in files else files[0])
+            pointer, seen = state.get(key, (None, None))
+            if pointer in files and seen == filename:
+                chosen = pointer
+            elif filename in files:
+                chosen = filename
+            else:
+                chosen = pointer if pointer in files else files[0]
             next_filename = files[(files.index(chosen) + 1) % len(files)]
-            state[key] = next_filename
+            state[key] = (next_filename, filename)
         return chosen, next_filename
 
     chosen = filename if (filename and filename in files) else files[0]

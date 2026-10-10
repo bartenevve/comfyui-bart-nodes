@@ -56,13 +56,46 @@ class ResolveFilenamesTests(unittest.TestCase):
         self.assertEqual(first[0], "a.png")
         self.assertEqual(second[0], "b.png")  # not "a.png" again, despite identical stale input
 
-    def test_sequential_falls_back_to_filename_when_persisted_state_is_stale(self):
-        state = {"node1": "deleted.png"}
+    def test_sequential_honors_a_widget_that_moved_since_the_last_run(self):
+        # sequential -> user picks another file by hand -> sequential again:
+        # the pointer must not override what the widget now shows
+        state = {}
+        resolve_filenames(self.files, False, True, "a.png", unique_id="n", state=state)  # pointer -> b
+        chosen, next_ = resolve_filenames(self.files, False, True, "c.png", unique_id="n", state=state)
+        self.assertEqual((chosen, next_), ("c.png", "a.png"))
+
+    def test_sequential_follows_frontend_sync_between_runs(self):
+        # normal one-at-a-time use: after each run the frontend writes the
+        # advance into the widget, so the next run arrives with it
+        state = {}
+        seen = []
+        widget = "a.png"
+        for _ in range(4):
+            chosen, widget = resolve_filenames(self.files, False, True, widget, unique_id="n", state=state)
+            seen.append(chosen)
+        self.assertEqual(seen, ["a.png", "b.png", "c.png", "a.png"])
+
+    def test_sequential_batch_of_queued_runs_with_one_snapshot_still_advances(self):
+        state = {}
+        seen = [
+            resolve_filenames(self.files, False, True, "b.png", unique_id="n", state=state)[0]
+            for _ in range(4)
+        ]
+        self.assertEqual(seen, ["b.png", "c.png", "a.png", "b.png"])
+
+    def test_sequential_repeated_blank_filename_keeps_advancing(self):
+        # API-driven use: the widget is never synced, filename stays empty
+        state = {}
+        seen = [resolve_filenames(self.files, False, True, "", unique_id="n", state=state)[0] for _ in range(4)]
+        self.assertEqual(seen, ["a.png", "b.png", "c.png", "a.png"])
+
+    def test_sequential_falls_back_to_filename_when_pointer_is_stale(self):
+        state = {("node1", None): ("deleted.png", "x.png")}
         chosen, _ = resolve_filenames(self.files, False, True, "b.png", unique_id="node1", state=state)
         self.assertEqual(chosen, "b.png")
 
-    def test_sequential_falls_back_to_first_file_when_state_and_input_both_stale(self):
-        state = {"node1": "deleted.png"}
+    def test_sequential_falls_back_to_first_file_when_pointer_and_input_both_stale(self):
+        state = {("node1", None): ("deleted.png", "also_deleted.png")}
         chosen, _ = resolve_filenames(self.files, False, True, "also_deleted.png", unique_id="node1", state=state)
         self.assertEqual(chosen, "a.png")
 

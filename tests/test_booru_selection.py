@@ -20,6 +20,21 @@ class FixedRng:
         return self.value
 
 
+class TestIncrementReconcilesWithWidget(unittest.TestCase):
+    def test_widget_that_moved_since_the_last_run_wins(self):
+        state = {}
+        resolve_index(10, False, True, 2, unique_id="n", state=state)  # pointer -> 3
+        self.assertEqual(resolve_index(10, False, True, 7, unique_id="n", state=state), (7, 8))
+
+    def test_frontend_sync_between_runs_walks_the_list(self):
+        state = {}
+        seen, widget = [], 2
+        for _ in range(4):
+            chosen, widget = resolve_index(4, False, True, widget, unique_id="n", state=state)
+            seen.append(chosen)
+        self.assertEqual(seen, [2, 3, 0, 1])
+
+
 class TestResolveIndex(unittest.TestCase):
     def test_empty_result_list_raises(self):
         with self.assertRaises(ValueError):
@@ -61,7 +76,7 @@ class TestResolveIndex(unittest.TestCase):
         self.assertEqual(other_tags, (0, 1))
 
     def test_increment_pointer_past_shrunken_total_resets(self):
-        state = {(None, None): 99}
+        state = {(None, None): (99, 0)}
         self.assertEqual(resolve_index(5, False, True, 0, state=state), (0, 1))
 
     def test_random_takes_precedence_over_increment(self):
