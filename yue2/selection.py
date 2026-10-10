@@ -1,28 +1,39 @@
-import glob
-import os
+VAE_REPOS = {
+    "YuE2-Vae": "m-a-p/YuE2-Vae",
+    "YuE2-Vae-legacy": "m-a-p/YuE2-Vae-legacy",
+}
 
 
-def read_first_file(directory, pattern):
-    """Read whichever file matches `pattern` in `directory`.
+def vae_repo(choice):
+    """HF repo id for a VAE dropdown value (from_pretrained wants the full id)."""
+    try:
+        return VAE_REPOS[choice]
+    except KeyError:
+        raise ValueError(f"unknown VAE {choice!r}, expected one of {sorted(VAE_REPOS)}") from None
 
-    The exact filename yue2's Plan.save()/Song.save_artifacts() write isn't
-    documented anywhere we could confirm - discovering it by glob instead of
-    hardcoding a guessed name means a harmless naming difference doesn't
-    turn into a silent wrong-file read or a crash.
+
+def backend_for(device_type):
+    """yue2's default backend captures CUDA graphs; everything else needs eager."""
+    return "torch" if device_type == "cuda" else "torch-eager"
+
+
+def generate_error(cot, abc):
+    """Why this cot/abc pair would be rejected by yue2, or None if it is fine.
+
+    yue2 raises deep inside the run for both cases; knowing up front lets the
+    node fail when the graph is queued, not after the model has loaded.
     """
-    matches = sorted(glob.glob(os.path.join(directory, pattern)))
-    if not matches:
-        raise FileNotFoundError(f"yue2 did not produce a {pattern} file in {directory}")
-    with open(matches[0], "r", encoding="utf-8") as f:
-        return f.read()
+    if abc and abc.strip() and cot == "off":
+        return "an external abc score needs cot=melody or cot=full (cot=off skips the score)"
+    return None
 
 
 def build_generate_kwargs(style, lyrics, cot, seed, abc=""):
     """Assembles the pipeline() call's kwargs - `abc` is only passed at all
-    when non-empty, since yue2's fresh-generation path is triggered by its
-    absence, not by an empty string.
+    when it has content, since yue2's fresh-generation path is triggered by
+    its absence, and it rejects a blank string.
     """
     kwargs = {"style": style, "lyrics": lyrics, "cot": cot, "seed": seed}
-    if abc:
+    if abc and abc.strip():
         kwargs["abc"] = abc
     return kwargs

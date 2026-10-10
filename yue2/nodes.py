@@ -1,22 +1,19 @@
-import os
-import tempfile
-
+import numpy as np
 import torch
-import torchaudio
 
-from .selection import build_generate_kwargs, read_first_file
+from .selection import VAE_REPOS, backend_for, build_generate_kwargs, generate_error, vae_repo
 
 MODEL_ID = "m-a-p/YuE2-3B"
-VAE_CHOICES = ["YuE2-Vae", "YuE2-Vae-legacy"]
+VAE_CHOICES = list(VAE_REPOS)
 COT_CHOICES = ["full", "melody", "off"]
 # 2**53 - 1: the most a JS number (how the frontend stores widget values)
 # holds exactly - a larger seed typed into the widget would be silently rounded.
 MAX_SEED = 2**53 - 1
 
-# Loading the pipeline pulls ~7GB of weights onto the GPU; ComfyUI may
-# re-execute a loader node (a downstream change, a cache miss) far more
-# often than the weights actually need reloading, so the pipeline is kept
-# here keyed by (vae, device) rather than reloaded on every call.
+# Loading the pipeline pulls ~7GB of weights; ComfyUI may re-execute a loader
+# node (a downstream change, a cache miss) far more often than the weights
+# actually need reloading, so the pipeline is kept here keyed by (vae, device)
+# rather than reloaded on every call.
 _PIPELINE_CACHE = {}
 
 
@@ -38,13 +35,51 @@ def _get_pipeline(vae, device):
                 "YuE2 section)."
             ) from exc
 
-        _PIPELINE_CACHE[key] = YuE2Pipeline.from_pretrained(MODEL_ID, device=device, vae=vae)
+        resolved = device
+        if device == "auto":
+            resolved = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        _PIPELINE_CACHE[key] = YuE2Pipeline.from_pretrained(
+            MODEL_ID,
+            vae=vae_repo(vae),
+            device=device,
+            backend=backend_for(torch.device(resolved).type),
+        )
     return _PIPELINE_CACHE[key]
 
 
-def _load_audio(path):
-    waveform, sample_rate = torchaudio.load(path)
-    return {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+def _cancelled():
+    try:
+        from comfy.model_management import processing_interrupted
+
+        return processing_interrupted()
+    except ImportError:
+        return False
+
+
+def _run_interruptible(call, *args, **kwargs):
+    """Run a yue2 call so the Cancel button stops it.
+
+    yue2 polls `cancelled()` between tokens and raises InterruptedError;
+    ComfyUI expects its own exception type to treat that as a user interrupt
+    rather than a node failure.
+    """
+    try:
+        return call(*args, cancelled=_cancelled, **kwargs)
+    except InterruptedError:
+        try:
+            from comfy.model_management import InterruptProcessingException
+        except ImportError:
+            raise
+        raise InterruptProcessingException() from None
+
+
+def _to_comfy_audio(audio, sample_rate):
+    """yue2's [samples, channels] (or mono [samples]) array -> ComfyUI AUDIO [1, C, T]."""
+    array = np.asarray(audio, dtype=np.float32)
+    if array.ndim == 1:
+        array = array[:, None]
+    waveform = torch.from_numpy(np.ascontiguousarray(array.T)).unsqueeze(0)
+    return {"waveform": waveform, "sample_rate": int(sample_rate)}
 
 
 class YuE2ModelLoader:
@@ -58,7 +93,8 @@ class YuE2ModelLoader:
         return {
             "required": {
                 "vae": (VAE_CHOICES, {"default": VAE_CHOICES[0]}),
-                "device": ("STRING", {"default": "cuda"}),
+                # "auto" = CUDA if there is one, else Apple MPS, else CPU
+                "device": ("STRING", {"default": "auto"}),
             },
         }
 
@@ -94,10 +130,8 @@ class YuE2Plan:
     CATEGORY = "audio/yue2"
 
     def plan(self, pipeline, style, lyrics, seed):
-        with tempfile.TemporaryDirectory() as tmp:
-            plan = pipeline.plan(style=style, lyrics=lyrics, cot="full", seed=seed)
-            plan.save(tmp)
-            return (read_first_file(tmp, "*.abc"),)
+        plan = _run_interruptible(pipeline.plan, style=style, lyrics=lyrics, cot="full", seed=seed)
+        return (plan.abc or "",)
 
 
 class YuE2Generate:
@@ -131,31 +165,16 @@ class YuE2Generate:
     FUNCTION = "generate"
     CATEGORY = "audio/yue2"
 
+    @classmethod
+    def VALIDATE_INPUTS(cls, cot=None, abc=None):
+        # None = wired from another node, unknowable until execution
+        if cot is None or abc is None:
+            return True
+        return generate_error(cot, abc) or True
+
     def generate(self, pipeline, style, lyrics, cot, seed, abc=""):
         kwargs = build_generate_kwargs(style, lyrics, cot, seed, abc)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            song = pipeline(**kwargs)
-            audio_path = os.path.join(tmp, "song.flac")
-            song.save(audio_path)
-            song.save_artifacts(tmp)
-            audio = _load_audio(audio_path)
-            try:
-                abc_out = read_first_file(tmp, "*.abc")
-            except FileNotFoundError:
-                abc_out = abc
-
-        return (audio, abc_out)
-
-
-NODE_CLASS_MAPPINGS = {
-    "YuE2ModelLoader": YuE2ModelLoader,
-    "YuE2Plan": YuE2Plan,
-    "YuE2Generate": YuE2Generate,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "YuE2ModelLoader": "YuE2 Model Loader \U0001f3b5",
-    "YuE2Plan": "YuE2 Plan Score \U0001f3b5",
-    "YuE2Generate": "YuE2 Generate Song \U0001f3b5",
-}
+        song = _run_interruptible(pipeline, **kwargs)
+        # with cot=off there is no score; hand back what came in so a chained
+        # node still gets a string
+        return (_to_comfy_audio(song.audio, song.sample_rate), song.abc or abc or "")
