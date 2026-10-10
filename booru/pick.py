@@ -39,9 +39,12 @@ def pick(
 
     Returns a dict with the post's metadata plus `index` (the position actually
     used) and `next_index` (what the widget should hold for the next run).
-    Random mode retries on posts we can't decode (videos), since a fresh
-    position is free there; the fixed/increment modes must not silently drift
-    off the position the user asked for, so they raise instead.
+    Random and increment modes skip posts we can't decode (videos) and try
+    another position - a random one, or the next in line. Skipping is the point
+    of increment mode: stopping with an error on every video would leave the
+    pointer, which has already stepped past it, and the user at a dead end.
+    Only fixed mode, where the user named an exact position, must not drift
+    off it, so it raises instead.
     """
     source = get_source(source_name)
     tags = tags.strip()
@@ -50,7 +53,7 @@ def pick(
     if total <= 0:
         raise NoPostsError(f"no posts found for tags: {tags or '(any)'}")
 
-    attempts = RANDOM_RETRIES if random_post else 1
+    attempts = RANDOM_RETRIES if (random_post or increment_on_queue) else 1
     last_error = None
     for _ in range(attempts):
         chosen, next_index = resolve_index(

@@ -264,6 +264,43 @@ class TestAnalyticsSnippet(unittest.TestCase):
             run('window.gtag("event", "x", {});')
 
 
+class TestHardening(unittest.TestCase):
+    """The interpreted source is a remote script we don't control; none of
+    these may escape as anything but a JSError (or a correct JS result)."""
+
+    def shown(self, expression):
+        return run('document.getElementById("promptDisplay").innerHTML = ' + expression + ";")
+
+    def test_pow_matches_js_where_python_raises_or_goes_complex(self):
+        self.assertEqual(self.shown("Math.pow(2, 10)"), "1024")
+        self.assertEqual(self.shown("Math.pow(-8, 1/3)"), "NaN")  # complex in Python
+        self.assertEqual(self.shown("Math.pow(0, -1)"), "Infinity")  # ZeroDivisionError in Python
+        self.assertEqual(self.shown("Math.pow(10, 1000)"), "Infinity")  # OverflowError in Python
+        self.assertEqual(self.shown("Math.pow(-2, 3)"), "-8")
+
+    def test_nested_loops_share_one_iteration_budget(self):
+        original = jsmini.MAX_LOOP_ITERATIONS
+        jsmini.MAX_LOOP_ITERATIONS = 1000
+        try:
+            with self.assertRaises(jsmini.JSError):
+                # 100 * 100 = 10000 > 1000, though no single loop passes 100
+                run("for (var i = 0; i < 100; i++) { for (var j = 0; j < 100; j++) { var x = 1; } }")
+        finally:
+            jsmini.MAX_LOOP_ITERATIONS = original
+
+    def test_huge_array_is_rejected(self):
+        with self.assertRaises(jsmini.JSError):
+            run("var a = new Array(99999999999);")
+
+    def test_runaway_recursion_becomes_jserror(self):
+        with self.assertRaises(jsmini.JSError):
+            jsmini.run_script("function f() { return f(); }\nfunction generateThings() { f(); }\n")
+
+    def test_malformed_unicode_escape_becomes_jserror(self):
+        with self.assertRaises(jsmini.JSError):
+            run(r'var s = "\u12";')
+
+
 class TestFailureModes(unittest.TestCase):
     def test_unsupported_syntax_raises_instead_of_guessing(self):
         with self.assertRaises(jsmini.JSError):

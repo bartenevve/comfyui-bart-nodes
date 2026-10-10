@@ -17,7 +17,8 @@ message instead of a garbled prompt.
 import math
 import re
 
-MAX_LOOP_ITERATIONS = 1_000_000
+MAX_LOOP_ITERATIONS = 1_000_000  # across ALL loops of one run, nested ones included
+MAX_ARRAY_LENGTH = 1_000_000
 
 
 class JSError(RuntimeError):
@@ -729,6 +730,7 @@ class Interpreter:
         self.rng = rng
         self.scope = {}
         self.functions = {}
+        self.loop_iterations = 0
 
     # --- entry points
 
@@ -796,10 +798,11 @@ class Interpreter:
         _, initializer, test, update, body = statement
         if initializer is not None:
             self.execute(initializer)
-        iterations = 0
         while test is None or js_truthy(self.evaluate(test)):
-            iterations += 1
-            if iterations > MAX_LOOP_ITERATIONS:
+            # one budget for the whole run: a per-loop counter would let
+            # nested loops multiply (1e6 * 1e6) past any sane bound
+            self.loop_iterations += 1
+            if self.loop_iterations > MAX_LOOP_ITERATIONS:
                 raise JSError("loop exceeded the iteration limit")
             self.execute(body)
             if update is not None:
@@ -1032,7 +1035,10 @@ class Interpreter:
         first = arguments[0] if arguments else UNDEFINED
         if name == "Array":
             if len(arguments) == 1 and isinstance(first, (int, float)) and not isinstance(first, bool):
-                return [UNDEFINED] * _to_integer(first)
+                length = _to_integer(first)
+                if not 0 <= length <= MAX_ARRAY_LENGTH:
+                    raise JSError(f"array length {length} is outside 0..{MAX_ARRAY_LENGTH}")
+                return [UNDEFINED] * length
             return list(arguments)
         if name == "String":
             return js_string(first) if arguments else ""
@@ -1082,12 +1088,27 @@ class Interpreter:
         if name == "sqrt":
             return math.sqrt(first) if first >= 0 else float("nan")
         if name == "pow":
-            return float(first ** values[1])
+            return _js_pow(first, values[1] if len(values) > 1 else float("nan"))
         if name == "min":
             return min(values) if values else float("inf")
         if name == "max":
             return max(values) if values else float("-inf")
         raise JSError(f"unsupported Math method: {name}")
+
+
+def _js_pow(base, exponent):
+    """Math.pow with JS results where Python raises or goes complex."""
+    if math.isnan(base) or math.isnan(exponent):
+        return 1.0 if exponent == 0 else float("nan")
+    try:
+        result = base**exponent
+    except ZeroDivisionError:  # 0 ** negative
+        return float("inf")
+    except OverflowError:
+        return float("inf") if base > 0 or float(exponent).is_integer() and exponent % 2 == 0 else float("-inf")
+    # a negative base with a fractional exponent is a complex number in Python
+    # and NaN in JS
+    return float("nan") if isinstance(result, complex) else float(result)
 
 
 def _string_method(text, name, arguments):
@@ -1208,5 +1229,13 @@ def run_script(source, values=None, selected=(), rng=None, output_id="promptDisp
 
     document = Document(values=values, selected=selected)
     interpreter = Interpreter(document, rng if rng is not None else random_module.Random())
-    interpreter.run(parse(source))
+    try:
+        interpreter.run(parse(source))
+    except JSError:
+        raise
+    except (RecursionError, MemoryError, OverflowError, ValueError, TypeError, ZeroDivisionError, IndexError, KeyError) as exc:
+        # the source is a remote script we don't control: whatever it trips
+        # inside the interpreter (runaway recursion, a bad \u escape, ...) must
+        # surface as the one error type callers handle, not a raw traceback
+        raise JSError(f"script failed inside the interpreter ({type(exc).__name__}: {exc})") from exc
     return document.written(output_id)

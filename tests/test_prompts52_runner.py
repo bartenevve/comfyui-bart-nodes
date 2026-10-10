@@ -187,3 +187,23 @@ class TestSeedRange(unittest.TestCase):
         for _ in range(2000):
             seed = rng.randrange(nodes.MAX_SEED + 1)
             self.assertEqual(int(float(seed)), seed)
+
+
+class TestNodeValidation(unittest.TestCase):
+    def validate(self, **kwargs):
+        nodes = module("prompts52.nodes")
+        args = dict(generator="Prompts", input_1="", input_2="", input_3="", choice_list="")
+        args.update(kwargs)
+        return nodes.LoadRandom52Prompt.VALIDATE_INPUTS(**args)
+
+    def test_generator_that_needs_a_list_is_rejected_when_it_is_blank(self):
+        self.assertRegex(self.validate(generator="Random Choice"), "needs")
+
+    def test_same_generator_passes_with_its_list(self):
+        self.assertIs(self.validate(generator="Random Choice", choice_list="red\ngreen"), True)
+
+    def test_generator_without_required_fields_passes(self):
+        self.assertIs(self.validate(), True)
+
+    def test_wired_input_is_left_to_execution(self):
+        self.assertIs(self.validate(generator="Random Choice", choice_list=None), True)

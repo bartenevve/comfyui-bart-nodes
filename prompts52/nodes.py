@@ -2,7 +2,7 @@ import hashlib
 import random
 
 from . import runner
-from .catalog import DEFAULT_GENERATOR, GENERATOR_LABELS
+from .catalog import DEFAULT_GENERATOR, GENERATOR_LABELS, get_generator
 
 # 2**53 - 1: the largest integer a JS number (which is what the ComfyUI
 # frontend stores widget values as) holds exactly. A full 64-bit seed comes
@@ -87,3 +87,19 @@ class LoadRandom52Prompt:
         parts = (generator, str(seed), input_1, input_2, input_3, choice_list)
         payload = "|".join(f"{len(part)}:{part}" for part in parts)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, generator=None, input_1=None, input_2=None, input_3=None, choice_list=None):
+        # a generator's required field (e.g. Random Choice's list) is rejected
+        # when queuing instead of deep inside execution. None = wired from
+        # another node, so unknowable here and left to execution.
+        if generator is None or None in (input_1, input_2, input_3, choice_list):
+            return True
+        try:
+            runner.build_document_state(
+                get_generator(generator),
+                {"input_1": input_1, "input_2": input_2, "input_3": input_3, "choice_list": choice_list},
+            )
+        except (runner.GeneratorError, KeyError) as exc:
+            return str(exc)
+        return True

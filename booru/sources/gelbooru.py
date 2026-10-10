@@ -89,15 +89,33 @@ def parse_last_pid(html):
     return int(match.group(1)) if match else None
 
 
+def is_gelbooru_url(url):
+    """http(s) URL on gelbooru.com or one of its subdomains (imgN.gelbooru.com)."""
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme in ("http", "https") and (host == "gelbooru.com" or host.endswith(".gelbooru.com"))
+
+
 def parse_file_url(html):
-    """Original file URL from a post page, falling back to the sample image."""
+    """Original file URL from a post page, falling back to the sample image.
+
+    Every candidate must be on gelbooru.com: the page is third-party HTML (a
+    post's source/description fields echo user-submitted content), and a URL
+    read out of it is later fetched and served back through ComfyUI, so a
+    foreign host here would turn /random_booru/view into an open proxy. A
+    candidate on another host is skipped, not trusted.
+    """
     for pattern in (_ORIGINAL_URL, _OG_IMAGE, _MAIN_IMAGE):
         match = pattern.search(html)
-        if match:
-            url = html_module.unescape(match.group(1))
-            # og:image and friends are served with a doubled slash
-            # (".../gelbooru.com//images/...") which some CDN edges 404 on
-            return re.sub(r"(?<!:)//+", "/", url)
+        if not match:
+            continue
+        # protocol-relative ("//img3.gelbooru.com/...") and relative forms
+        url = urllib.parse.urljoin(ORIGIN, html_module.unescape(match.group(1)))
+        # og:image and friends are served with a doubled slash
+        # (".../gelbooru.com//images/...") which some CDN edges 404 on
+        url = re.sub(r"(?<!:)//+", "/", url)
+        if is_gelbooru_url(url):
+            return url
     return None
 
 
@@ -158,5 +176,9 @@ class Gelbooru(BooruSource):
         return url
 
     def download(self, url):
+        # checked again here, not just where the URL is parsed: this is the
+        # last step before the request goes out with our cookie and Referer
+        if not is_gelbooru_url(url):
+            raise LookupError(f"refusing to download from a non-gelbooru host: {url}")
         # image hosts 302 to the post page without a same-site Referer
         return fetch.cached_download(url, referer=ORIGIN, cookie=COOKIE)

@@ -74,6 +74,38 @@ class TestParsing(unittest.TestCase):
             "https://img4.gelbooru.com/samples/a6/94/sample_abc.jpg",
         )
 
+    def test_parse_file_url_skips_candidates_on_foreign_hosts(self):
+        # og:image / #image are third-party HTML; the fetched URL is served
+        # back through ComfyUI, so a foreign host must never be accepted
+        html = (
+            '<meta property="og:image" content="http://169.254.169.254/latest/meta-data/">'
+            '<img id="image" src="https://img4.gelbooru.com/samples/ok.jpg">'
+        )
+        self.assertEqual(gelbooru.parse_file_url(html), "https://img4.gelbooru.com/samples/ok.jpg")
+
+    def test_parse_file_url_none_when_every_candidate_is_foreign(self):
+        html = '<meta property="og:image" content="https://evil.example/x.jpg">'
+        self.assertIsNone(gelbooru.parse_file_url(html))
+
+    def test_parse_file_url_rejects_lookalike_hosts_and_schemes(self):
+        for bad in (
+            "https://gelbooru.com.evil.example/a.jpg",
+            "https://evilgelbooru.com/a.jpg",
+            "https://gelbooru.com@evil.example/a.jpg",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ):
+            with self.subTest(url=bad):
+                self.assertIsNone(gelbooru.parse_file_url(f'<meta property="og:image" content="{bad}">'))
+
+    def test_parse_file_url_resolves_protocol_relative_urls(self):
+        html = '<img id="image" src="//img3.gelbooru.com/samples/a.jpg">'
+        self.assertEqual(gelbooru.parse_file_url(html), "https://img3.gelbooru.com/samples/a.jpg")
+
+    def test_download_refuses_foreign_hosts(self):
+        with self.assertRaises(LookupError):
+            gelbooru.Gelbooru().download("https://evil.example/a.jpg")
+
     def test_parse_file_url_missing(self):
         self.assertIsNone(gelbooru.parse_file_url("<html>nothing here</html>"))
 
