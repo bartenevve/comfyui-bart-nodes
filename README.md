@@ -10,7 +10,7 @@ Nodes that pick *what* to load for you, instead of making you point at one thing
 
 The two image nodes live in category `image`, the prompt node in `text`. All three share the same UI conventions (🎲 button that works without executing the graph, preview that survives a workflow reload).
 
-The pack also has a fourth, differently-shaped set of nodes: **YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `audio/yue2`) wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) for actual music *generation*, not picking from something that already exists — see [its own section](#yue2-music-generation-) below, it has real GPU/dependency requirements the other four nodes don't.
+The pack also has two differently-shaped groups of nodes: **Anatomy Defect Filter (Ollama) 🔍** (category `image/quality`, [below](#anatomy-defect-filter-ollama-)) sorts images into passed/failed using an Ollama vision model, and **YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `audio/yue2`) wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) for actual music *generation*, not picking from something that already exists — see [its own section](#yue2-music-generation-) below, it has real GPU/dependency requirements the other four nodes don't.
 
 ## Install (manual / from archive)
 
@@ -137,6 +137,36 @@ Each generator on the site is a standalone `.js` file on the site's CDN, holding
 
 ---
 
+## Anatomy Defect Filter (Ollama) 🔍
+
+Splits an `IMAGE` (one picture or a batch) into **`passed`** and **`failed`** by asking an [Ollama](https://ollama.com) vision model whether each picture has the anatomy defects you selected — extra or missing limbs, wrong finger count, smeared hands, impossible poses and so on. Wire `failed` into a Save Image node to keep the rejects separately, or just leave it unconnected to throw them away.
+
+It needs a **chat-capable vision model** (`qwen3-vl`, `llama3.2-vision`, `gemma3`, `minicpm-v`, …). A pure embedding model cannot answer "does this hand have six fingers" — it only yields a vector. Use a non-thinking variant: Ollama returns thinking models' answer in a separate field and the node treats an empty answer as an error.
+
+| Widget | Meaning |
+| --- | --- |
+| `ollama_url` | Base URL of the Ollama server, reachable **from the ComfyUI machine** (`http://host:11434`). |
+| `model` | Name of the vision model as Ollama knows it (`ollama list`). Plain text on purpose — see Security. |
+| `extra_limbs`, `missing_limbs`, `bad_fingers`, `smeared_limbs`, `impossible_pose`, `face_deformation`, `merged_bodies` | Which defects to look for. At least one check (or a custom criterion) must be on. |
+| `custom_criterion` | Your own defect, in plain words (`a hand holding the cup has no thumb`). Evaluated like the built-in ones. |
+| `confidence_threshold` | The model rates each check with a confidence 0–1; a *found* defect at or above this fails the image. Lower = stricter. |
+| `max_side` | Longest side the image is downscaled to before sending (default 768). Bigger is slower and not always better; hands need enough pixels though. |
+| `timeout`, `seed` | Per-request timeout; seed for the request (temperature is always 0). |
+| `empty_branch` | What a branch with zero images outputs, see below. |
+
+**Outputs:** `passed`, `failed`, `report` (one line per image: `#3 FAIL bad_fingers (0.85): six fingers on left hand`), `report_json` (same, machine-readable), `passed_indices`, `failed_indices` (comma-separated positions in the input batch, e.g. `0,2,5`, to put filtered images back in order). The text outputs are always produced, even when a branch has no images.
+
+**Mixed batches.** With 10 images of which 2 are bad, `passed` is a batch of 8 and `failed` a batch of 2 — both ordinary outputs. `empty_branch` only matters when one side ends up with *no* images (e.g. all 10 passed, or you feed one image per queue so one output is always empty):
+
+- `blocker` — the empty output is a ComfyUI `ExecutionBlocker`: every node that depends on it silently doesn't run (a Save Image on `failed` simply does nothing when nothing failed). The catch is that *all* nodes fed by that output are skipped, not just the Save.
+- `placeholder` — the empty output is a single black image the size of the input, so downstream nodes always run. Filter it out yourself if you don't want it saved.
+
+**How a verdict is made.** Each image gets one request: a checklist prompt, the image as base64 JPEG, `format: json`, temperature 0. The answer is parsed tolerantly (code fences, checks nested or top-level); a check the model omits counts as not found, a found defect with no confidence counts as fully confident. An unparsable answer is retried once with a different seed, then the run **fails with an error** — it never quietly marks the image as failed or passed. If Ollama is unreachable or the model is missing, the run also errors with the reason.
+
+**Expect imperfect judgement.** Small vision models (7–8B) are unreliable at counting fingers and spotting subtle distortions, in both directions. Try the filter on ~20 images you've already judged by hand and tune `confidence_threshold` / model before filtering anything in bulk. Results for identical inputs and settings are cached by ComfyUI, so re-queuing an unchanged graph doesn't ask the model again.
+
+---
+
 ## YuE2 Music Generation 🎵
 
 Wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B): style + lyrics in, a full stereo song out. Three nodes in category `audio/yue2`:
@@ -186,11 +216,13 @@ The `yue2` package's Python API here (`YuE2Pipeline.from_pretrained(...)`, `pipe
 
 **52prompts node.** Same outbound-request caveat as the booru node: the site sees your server's IP, and `/random_prompts52/pick` is unauthenticated like everything else here. It takes a generator **label** out of a fixed table, never a URL, and the script URL it ends up fetching must be on the site's CDN host, so these endpoints cannot be pointed at an arbitrary target (no SSRF). The fetched script is **not** executed as JavaScript — it is run by `prompts52/jsmini.py`, which has no filesystem, network or `eval` surface at all: the worst a rewritten generator can do is raise an error or return odd text.
 
+**Anatomy filter node.** It sends your images to whatever `ollama_url` the workflow says, from the ComfyUI host — so images leave the machine if that server is remote, and a workflow someone else wrote can point it at any host:port reachable from yours (it only ever POSTs to `/api/chat` on that base URL). The node adds **no HTTP routes**: a frontend helper that took the URL from the browser (for example to fill a model dropdown) would turn ComfyUI into an open proxy, which is why `model` is a plain text field.
+
 **If ComfyUI is exposed on a LAN or the internet** (not just `127.0.0.1`), keep this in mind and restrict access at the network level (VPN, an authenticating reverse proxy, firewall) rather than assuming ComfyUI or these nodes restrict anything on their own. This isn't unique to this pack either — ComfyUI itself ships with no authentication on any of its endpoints by default.
 
 ## Tests
 
-The pure logic — file selection, booru position selection, the Gelbooru HTML parsers, and the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network) — is covered by unit tests:
+The pure logic — file selection, booru position selection, the Gelbooru HTML parsers, the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests:
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -224,6 +256,10 @@ prompts52/
   fetch.py              urllib GET, per-host throttle, in-memory TTL cache
   nodes.py              LoadRandom52Prompt
   routes.py             /random_prompts52/pick, /generators
+anatomy/
+  selection.py          pure logic: check catalogue, prompt, verdict parsing, pass/fail decision, report
+  ollama.py             stdlib client for Ollama's /api/chat (vision question -> answer text)
+  nodes.py              AnatomyDefectFilter: tensor -> JPEG, loop over the batch, split, empty-branch handling
 yue2/
   selection.py          pure logic: artifact-file discovery, generate() kwargs assembly
   nodes.py              YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
@@ -240,5 +276,6 @@ tests/                  unit tests (_pack.py imports pack submodules without tor
 - The booru node can only address the first 20034 positions of a search, and those positions shift as new posts are uploaded (see above).
 - The 52prompts node depends on the shape of the site's generator scripts. They are hand-written and have been stable for years, but a rewrite that reaches outside the supported JavaScript subset would need `prompts52/jsmini.py` extended — it fails loudly with the offending construct when that happens.
 - The YuE2 nodes are untested against a real GPU/the actual `yue2` package (see its own section above) — treat the exact API calls as a best-effort port from the model card until someone runs them for real.
+- The anatomy filter is only unit-tested for its parsing/decision logic and the Ollama client (against a mocked server); the node itself (tensor handling, `ExecutionBlocker`) hasn't been run in a real ComfyUI yet, and judgement quality depends entirely on the vision model you pick.
 - **TODO:** YuE2 isn't a row in the top overview table (line ~5) — it's a generative node, doesn't fit the "picks from" framing the table uses, so it's a prose mention + separate section instead. That's caused confusion (looks like the pack has 3 nodes at a glance). Rework the intro — either a second small table, or restructure the first one to fit both shapes.
 - Booru node: 2 of 3 file-URL fallback regexes in `booru/sources/gelbooru.py` don't validate the host (see Security above) — not yet fixed.

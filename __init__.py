@@ -48,6 +48,14 @@ try:
 except Exception:
     logger.exception("comfyui-bart-nodes: YuE2 nodes failed to load, skipping them")
 
+try:
+    from .anatomy.nodes import AnatomyDefectFilter
+
+    NODE_CLASS_MAPPINGS["AnatomyDefectFilter"] = AnatomyDefectFilter
+    NODE_DISPLAY_NAME_MAPPINGS["AnatomyDefectFilter"] = "Anatomy Defect Filter (Ollama) \U0001f50d"
+except Exception:
+    logger.exception("comfyui-bart-nodes: AnatomyDefectFilter failed to load, skipping it")
+
 WEB_DIRECTORY = "./js"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
