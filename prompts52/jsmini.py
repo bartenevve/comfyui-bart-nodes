@@ -400,6 +400,9 @@ class Parser:
 
     def parse_unary(self):
         token = self.peek()
+        if token.kind == "name" and token.value == "typeof":
+            self.advance()
+            return ("typeof", self.parse_unary())
         if token.kind == "punc" and token.value in ("!", "-", "+"):
             self.advance()
             return ("unary", token.value, self.parse_unary())
@@ -466,6 +469,21 @@ class Parser:
                     break
             self.expect("punc", "]")
             return ("array", elements)
+        if token.kind == "punc" and token.value == "{":
+            # object literal (in expression position a "{" is never a block):
+            # the site's analytics snippet passes one to window.gtag(...)
+            self.advance()
+            properties = []
+            while not self.at("punc", "}"):
+                key = self.advance()
+                if key.kind not in ("name", "str", "num"):
+                    raise JSError(f"unexpected object key {key.value!r} at offset {key.offset}")
+                self.expect("punc", ":")
+                properties.append((str(key.value), self.parse_assignment()))
+                if not self.eat("punc", ","):
+                    break
+            self.expect("punc", "}")
+            return ("object", properties)
         if token.kind == "name":
             if token.value == "new":
                 self.advance()
@@ -674,6 +692,19 @@ class _MathObject:
     pass
 
 
+class _Window:
+    """`window` with nothing on it: every property reads as undefined.
+
+    Exists for the analytics snippet the site appends to each generator
+    (`if (typeof window.gtag === "function") {...}`). With no `gtag`, the
+    feature test is false and the snippet never runs - which is also the
+    point: nothing here may phone home on the site's behalf.
+    """
+
+
+WINDOW = _Window()
+
+
 class _DocumentReference:
     pass
 
@@ -784,6 +815,10 @@ class Interpreter:
             return self.lookup(node[1])
         if kind == "array":
             return [self.evaluate(element) for element in node[1]]
+        if kind == "object":
+            return {key: self.evaluate(value) for key, value in node[1]}
+        if kind == "typeof":
+            return self.evaluate_typeof(node[1])
         if kind == "binary":
             return self.evaluate_binary(node[1], node[2], node[3])
         if kind == "logical":
@@ -858,6 +893,28 @@ class Interpreter:
             return pair[0] >= pair[1]
         raise JSError(f"unsupported operator: {operator}")
 
+    def evaluate_typeof(self, operand_node):
+        # `typeof name` is the one place an undeclared name must not raise
+        try:
+            value = self.evaluate(operand_node)
+        except JSError:
+            if operand_node[0] == "name":
+                return "undefined"
+            raise
+        if value is UNDEFINED:
+            return "undefined"
+        if value is None:
+            return "object"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, tuple) and value[0] in ("builtin", "method", "function"):
+            return "function"
+        return "object"
+
     def evaluate_unary(self, operator, operand_node):
         value = self.evaluate(operand_node)
         if operator == "!":
@@ -875,6 +932,8 @@ class Interpreter:
             return MATH
         if name == "document":
             return self.document
+        if name == "window":
+            return WINDOW
         if name == "undefined":
             return UNDEFINED
         if name == "null":
@@ -917,6 +976,8 @@ class Interpreter:
         raise JSError(f"cannot assign to {kind}")
 
     def get_member(self, container, name):
+        if isinstance(container, _Window):
+            return UNDEFINED
         if isinstance(container, Element):
             return container.get(name)
         if isinstance(container, (str, list)) and name == "length":

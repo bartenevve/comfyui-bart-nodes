@@ -218,6 +218,52 @@ class TestStatements(unittest.TestCase):
         self.assertEqual(run(body, seed=99), run(body, seed=99))
 
 
+class TestAnalyticsSnippet(unittest.TestCase):
+    """The site appended a GA4 block to the end of every generator script;
+    until it parsed, all 20 generators failed against the live site."""
+
+    SNIPPET = (
+        '// Track generator use in GA4\n'
+        'if (typeof window.gtag === "function") {\n'
+        '  window.gtag("event", "generator_used", {\n'
+        '    generator_name: "Zodiac"\n'
+        '  });\n'
+        '}\n'
+    )
+
+    def test_snippet_parses_and_is_a_noop(self):
+        body = 'document.getElementById("promptDisplay").innerHTML = "done";\n' + self.SNIPPET
+        self.assertEqual(run(body), "done")
+
+    def test_window_gtag_is_undefined_so_it_is_never_called(self):
+        body = (
+            'var kind = typeof window.gtag;\n'
+            'document.getElementById("promptDisplay").innerHTML = kind;'
+        )
+        self.assertEqual(run(body), "undefined")
+
+    def test_typeof_of_undeclared_name_does_not_raise(self):
+        body = 'document.getElementById("promptDisplay").innerHTML = typeof nowhere;'
+        self.assertEqual(run(body), "undefined")
+
+    def test_typeof_of_values(self):
+        body = (
+            'var a = ["x"]; var n = 1; var s = "t"; var f = Math.floor;\n'
+            'document.getElementById("promptDisplay").innerHTML = '
+            'typeof n + "," + typeof s + "," + typeof a + "," + typeof (n === 1);'
+        )
+        self.assertEqual(run(body), "number,string,object,boolean")
+
+    def test_object_literal_parses_in_expression_position(self):
+        body = 'var o = {a: 1, "b": "two"};\ndocument.getElementById("promptDisplay").innerHTML = "ok";'
+        self.assertEqual(run(body), "ok")
+
+    def test_window_has_no_other_surface(self):
+        # a call on window must not silently succeed: nothing may phone home
+        with self.assertRaises(jsmini.JSError):
+            run('window.gtag("event", "x", {});')
+
+
 class TestFailureModes(unittest.TestCase):
     def test_unsupported_syntax_raises_instead_of_guessing(self):
         with self.assertRaises(jsmini.JSError):
