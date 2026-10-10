@@ -9,6 +9,9 @@ from .selection import build_generate_kwargs, read_first_file
 MODEL_ID = "m-a-p/YuE2-3B"
 VAE_CHOICES = ["YuE2-Vae", "YuE2-Vae-legacy"]
 COT_CHOICES = ["full", "melody", "off"]
+# 2**53 - 1: the most a JS number (how the frontend stores widget values)
+# holds exactly - a larger seed typed into the widget would be silently rounded.
+MAX_SEED = 2**53 - 1
 
 # Loading the pipeline pulls ~7GB of weights onto the GPU; ComfyUI may
 # re-execute a loader node (a downstream change, a cache miss) far more
@@ -81,7 +84,7 @@ class YuE2Plan:
                 "pipeline": ("YUE2_PIPELINE",),
                 "style": ("STRING", {"default": "", "multiline": True}),
                 "lyrics": ("STRING", {"default": "", "multiline": True}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": MAX_SEED}),
             },
         }
 
@@ -116,7 +119,7 @@ class YuE2Generate:
                 "style": ("STRING", {"default": "", "multiline": True}),
                 "lyrics": ("STRING", {"default": "", "multiline": True}),
                 "cot": (COT_CHOICES, {"default": COT_CHOICES[0]}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": MAX_SEED}),
             },
             "optional": {
                 "abc": ("STRING", {"default": "", "multiline": True}),

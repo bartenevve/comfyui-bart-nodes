@@ -162,3 +162,28 @@ class TestGenerate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSeedRange(unittest.TestCase):
+    """The frontend stores widget values as JS numbers (doubles): a seed above
+    2**53 comes back rounded, so a prompt could not be reproduced from the
+    seed it reported. Found by driving the real UI."""
+
+    def test_seed_range_is_exactly_representable_as_a_js_number(self):
+        nodes = module("prompts52.nodes")
+        self.assertEqual(int(float(nodes.MAX_SEED)), nodes.MAX_SEED)
+        self.assertEqual(nodes.MAX_SEED, 2**53 - 1)
+
+    def test_widget_ceiling_matches_the_drawn_range(self):
+        nodes = module("prompts52.nodes")
+        widget = nodes.LoadRandom52Prompt.INPUT_TYPES()["required"]["seed"][1]
+        self.assertEqual(widget["max"], nodes.MAX_SEED)
+
+    def test_every_randomly_drawn_seed_survives_a_float_round_trip(self):
+        import random
+
+        nodes = module("prompts52.nodes")
+        rng = random.Random(1)
+        for _ in range(2000):
+            seed = rng.randrange(nodes.MAX_SEED + 1)
+            self.assertEqual(int(float(seed)), seed)

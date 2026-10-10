@@ -4,7 +4,11 @@ import random
 from . import runner
 from .catalog import DEFAULT_GENERATOR, GENERATOR_LABELS
 
-MAX_SEED = 0xFFFFFFFFFFFFFFFF
+# 2**53 - 1: the largest integer a JS number (which is what the ComfyUI
+# frontend stores widget values as) holds exactly. A full 64-bit seed comes
+# back from the node rounded, so "turn randomize off to reproduce this prompt"
+# would feed a *different* seed than the one that made it.
+MAX_SEED = 2**53 - 1
 
 
 class LoadRandom52Prompt:
