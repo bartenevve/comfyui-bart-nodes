@@ -65,10 +65,14 @@ def chat(url, model, prompt, image_b64, timeout=120, seed=0, num_ctx=4096):
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise OllamaError(f"ollama at {endpoint} returned a non-JSON response") from exc
 
-    content = (payload.get("message") or {}).get("content", "")
+    message = payload.get("message") or {}
+    content = message.get("content", "")
     if not content.strip():
-        raise OllamaError(
-            f"ollama returned an empty answer from model {model!r} "
-            "(it may have run out of tokens while thinking)"
-        )
+        if message.get("thinking"):
+            raise OllamaError(
+                f"model {model!r} spent its whole token budget thinking and never produced an "
+                "answer (done_reason: " + str(payload.get("done_reason")) + "). For qwen3-family "
+                "models keep append_no_think on; otherwise use a non-thinking model."
+            )
+        raise OllamaError(f"ollama returned an empty answer from model {model!r}")
     return content

@@ -37,13 +37,17 @@ def build_prompt(keys, custom_criterion=""):
         f'"{key}": {{"found": false, "confidence": 0.0, "note": ""}}' for key in keys
     )
     return (
-        "You are inspecting a single image for anatomy defects. Look carefully, "
-        "count fingers and limbs one by one, and judge only what is actually "
-        "visible. If no person or creature is visible, nothing is a defect.\n\n"
-        "Check for each of the following:\n"
+        "You are inspecting a single image for defects, mostly anatomy errors. "
+        "Look carefully, count fingers and limbs one by one, and judge only what "
+        "is actually visible. If no person or creature is visible, anatomy checks "
+        "find nothing.\n\n"
+        "Each line below describes a PROBLEM. For each one answer found=true only "
+        "if that problem is actually present in this image; found=false means the "
+        "image is fine in that respect (it is not a statement about whether the "
+        "description is true of something else).\n"
         + "\n".join(lines)
-        + "\n\nFor every check report whether the defect is found, your confidence "
-        "(0.0 to 1.0) and a few words of explanation. Answer with JSON only, in "
+        + "\n\nFor every check report found, your confidence (0.0 to 1.0) that the "
+        "answer is right, and a few words of explanation. Answer with JSON only, in "
         'exactly this shape:\n{"checks": {' + example + "}}"
     )
 

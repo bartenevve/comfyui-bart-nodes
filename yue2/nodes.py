@@ -25,7 +25,15 @@ def _get_pipeline(vae, device):
         # need it, and importing it here keeps that requirement out of the
         # module import path so __init__.py can degrade gracefully instead
         # of failing to import this whole sub-package.
-        from yue2 import YuE2Pipeline
+        try:
+            from yue2 import YuE2Pipeline
+        except ImportError as exc:
+            raise RuntimeError(
+                "the `yue2` package is not installed. It is not on PyPI: download "
+                "yue2_infer-*.whl from https://huggingface.co/m-a-p/YuE2-3B/tree/main and "
+                "`pip install` that file into ComfyUI's Python environment (see the README's "
+                "YuE2 section)."
+            ) from exc
 
         _PIPELINE_CACHE[key] = YuE2Pipeline.from_pretrained(MODEL_ID, device=device, vae=vae)
     return _PIPELINE_CACHE[key]

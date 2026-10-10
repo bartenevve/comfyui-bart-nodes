@@ -89,6 +89,9 @@ class AnatomyDefectFilter:
                 "max_side": ("INT", {"default": 768, "min": 128, "max": 4096, "step": 64}),
                 "timeout": ("INT", {"default": 120, "min": 5, "max": 3600}),
                 "num_ctx": ("INT", {"default": 4096, "min": 2048, "max": 32768, "step": 512}),
+                # qwen3-family models think even with think:false and can burn the whole
+                # token budget doing it; the "/no_think" soft switch is what stops it
+                "append_no_think": ("BOOLEAN", {"default": True}),
                 # Ollama reads the seed as a signed 64-bit int; keep well inside that
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0x7FFFFFFF}),
                 "empty_branch": (EMPTY_BRANCH_MODES, {"default": EMPTY_BRANCH_MODES[0]}),
@@ -110,12 +113,15 @@ class AnatomyDefectFilter:
         max_side,
         timeout,
         num_ctx,
+        append_no_think,
         seed,
         empty_branch,
         **checks,
     ):
         keys = selected_keys({key for key in CHECKS if checks.get(key)}, custom_criterion)
         prompt = build_prompt(keys, custom_criterion)
+        if append_no_think:
+            prompt += "\n/no_think"
 
         count, height, width = images.shape[0], images.shape[1], images.shape[2]
         progress = _progress_bar(count)

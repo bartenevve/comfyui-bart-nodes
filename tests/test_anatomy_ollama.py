@@ -89,6 +89,14 @@ class TestChat(unittest.TestCase):
             with self.assertRaisesRegex(ollama.OllamaError, "empty answer"):
                 self.call()
 
+    def test_empty_answer_with_thinking_points_at_the_cause(self):
+        response = FakeResponse(
+            {"message": {"content": "", "thinking": "hmm..."}, "done_reason": "length"}
+        )
+        with mock.patch.object(ollama.urllib.request, "urlopen", return_value=response):
+            with self.assertRaisesRegex(ollama.OllamaError, "thinking.*append_no_think"):
+                self.call()
+
     def test_non_json_body_is_an_error(self):
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = b"<html>proxy error</html>"

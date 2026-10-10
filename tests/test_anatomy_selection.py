@@ -33,6 +33,11 @@ class TestBuildPrompt(unittest.TestCase):
         self.assertIn('"bad_fingers"', prompt)
         self.assertNotIn('"extra_limbs"', prompt)
 
+    def test_prompt_says_found_means_the_problem_is_present(self):
+        # a custom criterion read as an expectation ("background is green" ->
+        # found=false, "as specified") inverted the verdict on a real model
+        self.assertIn("found=true only if that problem is actually present", sel.build_prompt(["custom"], "x"))
+
     def test_custom_criterion_text_is_used(self):
         prompt = sel.build_prompt(["custom"], "three nipples")
         self.assertIn("three nipples", prompt)
