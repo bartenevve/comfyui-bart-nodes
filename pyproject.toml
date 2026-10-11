@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-bart-nodes"
 description = "Random/sequential pickers (local directory, booru tag search, 52prompts.com text prompts), an Ollama-based anatomy defect filter for images, and a YuE2-3B music generation wrapper."
-version = "0.8.2"
+version = "0.8.3"
 license = { text = "MIT License" }
 
 [project.urls]
