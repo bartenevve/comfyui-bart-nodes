@@ -1,6 +1,19 @@
+import urllib.parse
 from dataclasses import dataclass
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+
+
+def url_on_domain(url, domain):
+    """http(s) URL whose host is `domain` or one of its subdomains.
+
+    Every source runs file URLs it read out of third-party responses through
+    this before fetching or serving them, so a poisoned field can't turn the
+    /random_booru/view route into an open proxy.
+    """
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme in ("http", "https") and (host == domain or host.endswith("." + domain))
 
 
 @dataclass

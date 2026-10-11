@@ -1,7 +1,9 @@
 from .gelbooru import Gelbooru
+from .moebooru import YandeRe
 
 _SOURCE_CLASSES = {
     Gelbooru.name: Gelbooru,
+    YandeRe.name: YandeRe,
 }
 
 # instantiated once each: the backends are stateless apart from module-level
