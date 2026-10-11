@@ -167,12 +167,26 @@ class TestSource(unittest.TestCase):
 
 
 class TestRegistry(unittest.TestCase):
-    def test_both_sources_registered_and_gelbooru_stays_default(self):
-        self.assertEqual(sources.SOURCE_NAMES, ["gelbooru", "yandere"])
+    def test_gelbooru_stays_default_and_moebooru_sites_are_registered(self):
         self.assertEqual(sources.DEFAULT_SOURCE, "gelbooru")
+        for name in ("yandere", "konachan", "konachan_net"):
+            self.assertIn(name, sources.SOURCE_NAMES)
 
     def test_index_ceiling_covers_the_deepest_source(self):
         self.assertEqual(sources.max_positions(), moebooru.YandeRe.max_positions)
+
+    def test_konachan_mirrors_pin_their_own_hosts(self):
+        for cls in (moebooru.KonachanCom, moebooru.KonachanNet):
+            with self.subTest(site=cls.name):
+                source = cls()
+                with self.assertRaises(LookupError):
+                    source.download("https://yande.re/image/a.jpg")
+                item = post(1, file_url=f"https://{cls.domain}/image/abc/x.png")
+                self.assertEqual(
+                    moebooru.parse_file_url(listing(item), 1, cls.origin, cls.domain),
+                    f"https://{cls.domain}/image/abc/x.png",
+                )
+                self.assertIsNone(moebooru.parse_file_url(listing(post(1)), 1, cls.origin, cls.domain))
 
     def test_extension_check_sees_percent_encoded_file_names(self):
         self.assertTrue(picker.is_image_url(FILE))

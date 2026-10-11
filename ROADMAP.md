@@ -3,47 +3,33 @@
 ## Booru sources
 
 Source list: [lxfly2000's image-board gist](https://gist.github.com/lxfly2000/c183fcd23cfb447b2b9cb353e103c8fe).
-Each candidate was probed anonymously on 2026-10-11 with a plain HTTP client (no cookies, no login), to see
-whether a backend is feasible at all. A source that sits behind a bot challenge is **not** worked around:
-it stays blocked until the site offers a supported way in (an API key, say).
+Every candidate was probed anonymously on 2026-10-11 with a plain HTTP client (no cookies, no login) to see
+whether a backend is feasible at all. A site behind a bot challenge is **not** worked around: it stays
+blocked until the site offers a supported way in (an API key, say).
 
-Interface to implement: `booru/sources/base.py` (`count`, `page`, `resolve_file_url`, `download`); every
-file URL read from a third-party response must pass `base.url_on_domain` for the site's own domain.
+Interface to implement: `booru/sources/base.py` (`count`, `page`, `resolve_file_url`, `download`). Every file
+URL read from a third-party response must pass `base.url_on_domain` for the site's own domain.
 
 ### Done
 
-| Site | Engine | Notes |
+| Site (`source` value) | Engine | Code |
 | --- | --- | --- |
-| Gelbooru | HTML scraper | `booru/sources/gelbooru.py` |
-| yande.re | Moebooru JSON API | `booru/sources/moebooru.py` |
+| Gelbooru (`gelbooru`) | HTML scraper (its API wants a key) | `booru/sources/gelbooru.py` |
+| yande.re (`yandere`) | Moebooru JSON | `booru/sources/moebooru.py` |
+| Konachan (`konachan`, `konachan_net`) | Moebooru JSON | `booru/sources/moebooru.py` |
+| Safebooru (`safebooru`), Xbooru (`xbooru`) | Gelbooru 0.2 `dapi` JSON | `booru/sources/dapi.py` |
 
-### Next, in order
+### Not done, and why
 
-1. **Konachan** (`konachan.com`, `konachan.net`) — Moebooru, `post.json` answered 200 on both. Subclass
-   `MoebooruSource` with a different `name` / `origin` / `domain` (~5 lines + a registry entry + a test that
-   the file host is accepted). Check where each site's file host lives (`konachan.com` vs a CDN domain) —
-   `url_on_domain` is per-domain, so a CDN on another domain needs the check widened per source.
-2. **Safebooru** (`safebooru.org`) and **Xbooru** (`xbooru.com`) — Gelbooru 0.2 `dapi` engine:
-   `index.php?page=dapi&s=post&q=index&limit=100&pid=<page>&tags=…`, answers 200 anonymously
-   (`json=1` for JSON on Safebooru, XML on both), count in the `<posts count="…">` header. One engine base
-   class (like `MoebooruSource`), two subclasses. Pagination is by page number (`pid`), file URL built from
-   the `directory`/`image` fields or `file_url` when present. Xbooru is R18 and served over plain http in the
-   gist; use https if it answers (the probe did, over https).
-3. **e621** (`e621.net`) — JSON API (`posts.json`) answered 200. From its public API docs (not verified
-   here): a descriptive `User-Agent` is required, the tag limit is 40 and `page=` is capped (cursors
-   `page=b<id>` / `a<id>` go deeper), so it needs its own engine class and a `fetch` option for a custom UA.
-   The site is R18-heavy; tag-based filtering (`rating:s`) is the user's job, as with the other sources.
-
-### Candidates needing more work
-
-| Site | Probe result | What it would take |
+| Site | Probe result | Why it is not an easy add |
 | --- | --- | --- |
-| Sankaku (`chan.sankakucomplex.com`) | the site redirects to a login page; `sankakuapi.com/posts` answered with JSON anonymously | a new engine; check whether file URLs are signed/expiring and whether anonymous access is meant to be used before building on it |
-| e-shuushuu, Zerochan, Anime-Pictures | no JSON API; Zerochan and Anime-Pictures answered with a bot check / 503 | HTML scrapers at best, and the bot-checked ones are blocked as above |
-
-### Blocked or unreachable
-
-| Site | Why |
-| --- | --- |
-| Danbooru, Safebooru (donmai.us), Sonohara, donmai.moe | API requests get a Cloudflare challenge (403, "Just a moment...") — no anonymous access for non-browser clients |
-| Lolibooru, 3dbooru (behoimi.org), One Yukkuri Place, tsundora | connection failed from the probing machine; retry later before deciding |
+| **e621** | `posts.json` answers 200 anonymously | Medium, not hard. A distinct engine: tags are nested per category instead of one string, `file.url` can be null for posts hidden from anonymous users, results are capped by page number (~750 pages of up to 320), and its API rules ask for a descriptive, unique `User-Agent` — `booru/fetch.py` currently sends one browser-like UA for every site, so it needs a per-source UA first. Count comes from a separate `counts/posts.json`. (Details from the site's public API docs, not verified here.) Do this next. |
+| **Sankaku** (`chan.sankakucomplex.com`) | The site redirects to a login page; `sankakuapi.com/posts` answered with JSON anonymously | Unknown rules: before building on it check that anonymous use is intended, whether file URLs are signed and expire (that would break the preview-then-execute cache), and how aggressively it rate-limits. A new engine either way (string ids, nested JSON). |
+| **Danbooru**, **Safebooru (donmai.us)**, **Sonohara**, **donmai.moe** | Every API request gets a Cloudflare challenge (HTTP 403, "Just a moment...") | Blocked for non-browser clients. Bypassing a bot check is out of scope; revisit if the site documents API-key access that skips the challenge. The engine itself (JSON, `counts/posts.json`) would be easy. |
+| **Zerochan** | HTTP 503 "Checking browser..." | Bot check, same as above; also has no stable public JSON listing. |
+| **Anime-Pictures** | Sits behind Cloudflare (the 301 came from it) | Bot check; JSON API not probed past that. |
+| **e-shuushuu** | HTML only, answers 200 | No API: would be an HTML scraper like Gelbooru's, with its own pagination and no count header. Low value for the effort. |
+| **Lolibooru** | Connection timeout (curl exit 28) | Unreachable from the probing machine; retry later. If it is Moebooru-based it is a 5-line subclass like Konachan. |
+| **3dbooru** (behoimi.org) | Connection timeout (curl exit 28) | Unreachable; also an old Danbooru 1.x engine, so it needs its own (small) JSON client. |
+| **One Yukkuri Place** (yukkuri.shii.org) | DNS lookup failed (curl exit 6) | Host does not resolve; may be gone. |
+| **tsundora** | Connection refused (curl exit 7) | Unreachable; unknown engine. |

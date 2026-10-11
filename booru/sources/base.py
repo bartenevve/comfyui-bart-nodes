@@ -1,3 +1,4 @@
+import re
 import urllib.parse
 from dataclasses import dataclass
 
@@ -14,6 +15,15 @@ def url_on_domain(url, domain):
     parsed = urllib.parse.urlparse(url)
     host = (parsed.hostname or "").lower()
     return parsed.scheme in ("http", "https") and (host == domain or host.endswith("." + domain))
+
+
+_COUNT = re.compile(r'<posts\s+count="(\d+)"')
+
+
+def parse_count(xml):
+    """The total from a `<posts count="N">` header (Moebooru and Gelbooru-dapi both use it), or None."""
+    match = _COUNT.search(xml)
+    return int(match.group(1)) if match else None
 
 
 @dataclass

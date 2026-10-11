@@ -7,7 +7,7 @@ Nodes that pick *what* to load for you, instead of making you point at one thing
 | Node | Picks from | Manual / random / stepping |
 | --- | --- | --- |
 | **Bart's Load Random Image 🎲** (`LoadRandomImage`) | an **arbitrary directory** on disk (not just the managed `ComfyUI/input`) | filename dropdown / random / next in alphabetical order |
-| **Bart's Load Random Booru Image 🎲** (`LoadRandomBooruImage`) | a **booru tag search** (Gelbooru, yande.re) | position in results / random / next position |
+| **Bart's Load Random Booru Image 🎲** (`LoadRandomBooruImage`) | a **booru tag search** (Gelbooru, yande.re, Konachan, Safebooru, Xbooru) | position in results / random / next position |
 | **Bart's Load Random Prompt (52prompts) 🎲** (`LoadRandom52Prompt`) | one of the 20 **text prompt generators** on [52prompts.com](https://52prompts.com/), chosen from a dropdown | seed / random each run |
 
 The two image nodes live in `Bart's nodes/Image`, the prompt node in `Bart's nodes/Text`. All three share the same UI conventions (🎲 button that works without executing the graph, preview that survives a workflow reload).
@@ -69,7 +69,7 @@ Pulls a post from a booru image board by tag search — randomly or by position 
 
 | Widget | Meaning |
 | --- | --- |
-| `source` | Which booru to query: `gelbooru` or `yandere` ([yande.re](https://yande.re)). The list comes from the source registry, so adding a backend adds an entry. |
+| `source` | Which booru to query: `gelbooru`, `yandere` ([yande.re](https://yande.re)), `konachan` / `konachan_net` ([konachan.com](https://konachan.com), and its safe-for-work mirror [konachan.net](https://konachan.net)), `safebooru` ([safebooru.org](https://safebooru.org)) or `xbooru` ([xbooru.com](https://xbooru.com), explicit). The list comes from the source registry, so adding a backend adds an entry. |
 | `tags` | Space-separated tag query, exactly what you would type in the chosen site's search box (`1girl blue_eyes rating:general`, `cat -comic`, `sort:score`). Empty = the whole site, newest first. |
 | `random_post` | Pick a random position in the result list on **every** Queue Prompt (server-side). |
 | `increment_on_queue` | Advance to the next position on every Queue Prompt, wrapping at the end of the result list. |
@@ -106,21 +106,30 @@ Positions are relative to Gelbooru's default ordering (newest first), so new upl
 
 Non-image posts (`.mp4`/`.webm`) can't be decoded: in random and increment mode the node skips to another position (a random one / the next in line, a few attempts), in fixed mode — where you named an exact position — it raises an error naming the post.
 
-### yande.re backend
+### yande.re and Konachan backends (Moebooru)
 
-`yande.re` runs the Moebooru engine, which has a plain anonymous JSON API, so this backend does not scrape HTML:
+These run the Moebooru engine, which has a plain anonymous JSON API, so the backend does not scrape HTML. One engine class (`MoebooruSource`), one small subclass per site:
 
 - **Listing** — `post.json?tags=<query>&limit=100&page=<n>`; position `i` is on page `i // 100 + 1`, slot `i % 100`.
-- **Total count** — the `count` attribute in the header of `post.xml?tags=<query>&limit=1`, cached for 60 s like the Gelbooru count. Capped at 1,000,000 positions (the whole site is ~1.3 M posts; pages deeper than the query's real size come back empty).
-- **File URL** — one extra `post.json?tags=id:<id>` request, the `file_url` field. It must be on `yande.re` or a subdomain (`files.yande.re`), otherwise the post is refused.
-- **Download** — `files.yande.re` serves the original (often several MB, PNGs included); sent with a `Referer`, cached on disk like the other backends.
-- **Ratings** — `rating:s` / `rating:q` / `rating:e` (safe / questionable / explicit) work as tags; anonymous queries return every rating. Moebooru caps anonymous queries at a few tags per search.
+- **Total count** — the `count` attribute in the header of `post.xml?tags=<query>&limit=1`, cached for 60 s like the Gelbooru count. Capped at 1,000,000 positions; pages deeper than the query's real size come back empty. (yande.re has ~1.3 M posts, Konachan far fewer.)
+- **File URL** — one extra `post.json?tags=id:<id>` request, the `file_url` field. It must be on the site's own domain or a subdomain (`files.yande.re`), otherwise the post is refused.
+- **Download** — the original file (often several MB, PNGs included), sent with a `Referer`, cached on disk like the other backends.
+- **Ratings** — `rating:s` / `rating:q` / `rating:e` (safe / questionable / explicit) work as tags; anonymous queries return every rating, except on `konachan_net`, which only ever has the safe ones.
 
-Other Moebooru sites (Konachan, ...) are one small subclass away — see [ROADMAP.md](ROADMAP.md).
+### Safebooru and Xbooru backends (Gelbooru 0.2 `dapi`)
+
+Unlike gelbooru.com itself (see above), these two answer the old Gelbooru API anonymously:
+
+- **Listing** — `index.php?page=dapi&s=post&q=index&json=1&limit=100&pid=<page>&tags=<query>`. The API's `pid` is a page number, so position `i` is on page `i // 100`, slot `i % 100`. An empty body means "no results".
+- **Total count** — the `<posts count="N">` header of the same call without `json=1`, cached for 60 s.
+- **File URL** — `&id=<id>` returns that single post; its `file_url` (or `images/<directory>/<image>` when absent) must be on the site's own domain or a subdomain (`img.xbooru.com`).
+- **Depth limit** — measured on both sites: the API answers up to an offset of **200,000** (`pid * limit`) and refuses beyond that with `API limited due to abuse`. The backend exposes at most 200,100 positions and surfaces the site's message if it is refused anyway. Narrow the search with tags to reach further into a big result set.
+
+Planned and ruled-out sites are listed with reasons in [ROADMAP.md](ROADMAP.md).
 
 ### Adding another booru
 
-`booru/sources/base.py` defines the interface (`Post` + `BooruSource`: `count()`, `page()`, `resolve_file_url()`), `booru/sources/gelbooru.py` and `booru/sources/moebooru.py` implement it (the latter is an engine base class: a new Moebooru site only sets `name`, `origin` and `domain`), `booru/sources/__init__.py` maps names to classes — dropping a module in there and registering it makes it appear in the `source` combo, no node or frontend change needed.
+`booru/sources/base.py` defines the interface (`Post` + `BooruSource`: `count()`, `page()`, `resolve_file_url()`), `booru/sources/gelbooru.py` implements it, and `booru/sources/moebooru.py` / `booru/sources/dapi.py` are engine base classes (a new site on either engine only sets `name`, `origin` and `domain`), `booru/sources/__init__.py` maps names to classes — dropping a module in there and registering it makes it appear in the `source` combo, no node or frontend change needed.
 
 ---
 
@@ -259,7 +268,7 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 
 **Directory node.** The `/random_image/list`, `/random_image/pick` and `/random_image/view` routes accept a `dir` parameter with **no restriction whatsoever** — anyone who can reach ComfyUI's HTTP port (not necessarily through the graph/UI at all — a bare GET request is enough) can list and read the contents of arbitrary files on disk that the ComfyUI process has access to. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug that an allowlist should close.
 
-**Booru node.** It makes **outbound requests to a third-party image board** from the ComfyUI host, and any prompt containing it does so on execution — the booru sees your server's IP and your tag queries. The `/random_booru/*` routes take `source` + `tags` + `index`/`post_id`, never a raw URL from the caller. The file URL itself is read out of third-party responses (HTML for Gelbooru, JSON for yande.re), so every candidate (Gelbooru: `_ORIGINAL_URL`, `_OG_IMAGE`, `_MAIN_IMAGE`; yande.re: the `file_url` field) must be on the source's own domain or a subdomain (`gelbooru.com` / `imgN.gelbooru.com`, `yande.re` / `files.yande.re`) — a candidate on any other host is skipped — and `download()` re-checks the host right before the request goes out, so these endpoints cannot be pointed at an arbitrary target (no SSRF). They are also unauthenticated like everything else here: anyone reaching the port can make your server fetch booru pages and fill the temp cache. Downloaded content is arbitrary third-party imagery, entirely unfiltered by rating (see above), and cached copies stay in ComfyUI's temp directory until it is cleaned.
+**Booru node.** It makes **outbound requests to a third-party image board** from the ComfyUI host, and any prompt containing it does so on execution — the booru sees your server's IP and your tag queries. The `/random_booru/*` routes take `source` + `tags` + `index`/`post_id`, never a raw URL from the caller. The file URL itself is read out of third-party responses (HTML for Gelbooru, JSON for the rest), so every candidate (Gelbooru: `_ORIGINAL_URL`, `_OG_IMAGE`, `_MAIN_IMAGE`; the JSON sources: the `file_url` field) must be on the source's own domain or a subdomain (`gelbooru.com` / `imgN.gelbooru.com`, `yande.re` / `files.yande.re`, `xbooru.com` / `img.xbooru.com`, ...) — a candidate on any other host is skipped — and `download()` re-checks the host right before the request goes out, so these endpoints cannot be pointed at an arbitrary target (no SSRF). They are also unauthenticated like everything else here: anyone reaching the port can make your server fetch booru pages and fill the temp cache. Downloaded content is arbitrary third-party imagery, entirely unfiltered by rating (see above), and cached copies stay in ComfyUI's temp directory until it is cleaned.
 
 **52prompts node.** Same outbound-request caveat as the booru node: the site sees your server's IP, and `/random_prompts52/pick` is unauthenticated like everything else here. It takes a generator **label** out of a fixed table, never a URL, and the script URL it ends up fetching must be on the site's CDN host, so these endpoints cannot be pointed at an arbitrary target (no SSRF). The fetched script is **not** executed as JavaScript — it is run by `prompts52/jsmini.py`, which has no filesystem, network or `eval` surface at all: the worst a rewritten generator can do is raise an error or return odd text.
 
@@ -269,7 +278,7 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 
 ## Tests
 
-The pure logic — file selection, booru position selection, the Gelbooru HTML parsers, the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (176+, no torch, ComfyUI or network needed):
+The pure logic — file selection, booru position selection, the booru backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (230+, no torch, ComfyUI or network needed):
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -295,7 +304,8 @@ booru/
   routes.py             /random_booru/pick, /count, /view, /sources
   sources/base.py       Post dataclass + BooruSource interface
   sources/gelbooru.py   Gelbooru scraper: listing / count / post-page parsing
-  sources/moebooru.py   Moebooru JSON-API engine + yande.re
+  sources/moebooru.py   Moebooru JSON-API engine: yande.re, Konachan .com / .net
+  sources/dapi.py       Gelbooru-0.2 dapi engine: Safebooru, Xbooru
   sources/__init__.py   name -> backend registry
 prompts52/
   jsmini.py             tiny JS interpreter: tokenizer, parser, evaluator, document shim
@@ -323,7 +333,7 @@ ROADMAP.md              planned work: further booru sources, with probe results
 ## Known limitations
 
 - Sequential/increment advancement is kept in the ComfyUI process's memory (resets on restart, then simply continues from the last value persisted in the workflow) and isn't synchronized across multiple parallel ComfyUI workers/processes, if you happen to run that (uncommon) setup.
-- The booru node can only address the first 20034 positions of a Gelbooru search (yande.re: up to 1,000,000), and those positions shift as new posts are uploaded (see above).
+- The booru node can only address the first 20034 positions of a Gelbooru search (yande.re / Konachan: up to 1,000,000; Safebooru / Xbooru: 200,100), and those positions shift as new posts are uploaded (see above).
 - The 52prompts node depends on the shape of the site's generator scripts. They are hand-written and have been stable for years, but a rewrite that reaches outside the supported JavaScript subset would need `prompts52/jsmini.py` extended — it fails loudly with the offending construct when that happens.
 - The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed — see the YuE2 section.
 - The anatomy filter has been run end to end in a real ComfyUI against a local Ollama (`qwen3-vl:8b`) on a few synthetic images — enough to show the routing, empty-branch modes and error paths work, not enough to say how well any model spots real six-fingered hands. Judgement quality depends entirely on the vision model you pick; calibrate on your own images.

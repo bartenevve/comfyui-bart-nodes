@@ -1,9 +1,14 @@
 from .gelbooru import Gelbooru
-from .moebooru import YandeRe
+from .dapi import Safebooru, Xbooru
+from .moebooru import KonachanCom, KonachanNet, YandeRe
 
 _SOURCE_CLASSES = {
     Gelbooru.name: Gelbooru,
     YandeRe.name: YandeRe,
+    KonachanCom.name: KonachanCom,
+    KonachanNet.name: KonachanNet,
+    Safebooru.name: Safebooru,
+    Xbooru.name: Xbooru,
 }
 
 # instantiated once each: the backends are stateless apart from module-level

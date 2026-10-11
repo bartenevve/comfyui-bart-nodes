@@ -1,25 +1,16 @@
 import json
-import re
 import threading
 import time
 import urllib.parse
 
 from .. import fetch
-from .base import BooruSource, Post, url_on_domain
+from .base import BooruSource, Post, parse_count, url_on_domain  # noqa: F401  parse_count re-exported
 
 _COUNT_TTL = 60.0
 _count_cache = {}
 _count_lock = threading.Lock()
 
-_COUNT = re.compile(r'<posts\s+count="(\d+)"')
-
 _RATINGS = {"s": "safe", "q": "questionable", "e": "explicit"}
-
-
-def parse_count(xml):
-    """The total from `post.xml`'s `<posts count="N">` header, or None."""
-    match = _COUNT.search(xml)
-    return int(match.group(1)) if match else None
 
 
 def parse_posts(text, origin, domain):
@@ -134,3 +125,17 @@ class YandeRe(MoebooruSource):
     name = "yandere"
     origin = "https://yande.re/"
     domain = "yande.re"
+
+
+class KonachanCom(MoebooruSource):
+    name = "konachan"
+    origin = "https://konachan.com/"
+    domain = "konachan.com"
+
+
+class KonachanNet(MoebooruSource):
+    """The safe-for-work mirror of Konachan.com (same posts, no explicit ratings)."""
+
+    name = "konachan_net"
+    origin = "https://konachan.net/"
+    domain = "konachan.net"
