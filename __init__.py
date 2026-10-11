@@ -14,7 +14,7 @@ try:
     from . import routes  # noqa: F401  registers the aiohttp routes on import
 
     NODE_CLASS_MAPPINGS["LoadRandomImage"] = LoadRandomImage
-    NODE_DISPLAY_NAME_MAPPINGS["LoadRandomImage"] = "Load Random Image \U0001f3b2"
+    NODE_DISPLAY_NAME_MAPPINGS["LoadRandomImage"] = "Bart's Load Random Image \U0001f3b2"
 except Exception:
     logger.exception("comfyui-bart-nodes: LoadRandomImage failed to load, skipping it")
 
@@ -23,7 +23,7 @@ try:
     from .booru import routes as booru_routes  # noqa: F401  registers /random_booru
 
     NODE_CLASS_MAPPINGS["LoadRandomBooruImage"] = LoadRandomBooruImage
-    NODE_DISPLAY_NAME_MAPPINGS["LoadRandomBooruImage"] = "Load Random Booru Image \U0001f3b2"
+    NODE_DISPLAY_NAME_MAPPINGS["LoadRandomBooruImage"] = "Bart's Load Random Booru Image \U0001f3b2"
 except Exception:
     logger.exception("comfyui-bart-nodes: LoadRandomBooruImage failed to load, skipping it")
 
@@ -32,7 +32,7 @@ try:
     from .prompts52 import routes as prompts52_routes  # noqa: F401  registers /random_prompts52
 
     NODE_CLASS_MAPPINGS["LoadRandom52Prompt"] = LoadRandom52Prompt
-    NODE_DISPLAY_NAME_MAPPINGS["LoadRandom52Prompt"] = "Load Random Prompt (52prompts) \U0001f3b2"
+    NODE_DISPLAY_NAME_MAPPINGS["LoadRandom52Prompt"] = "Bart's Load Random Prompt (52prompts) \U0001f3b2"
 except Exception:
     logger.exception("comfyui-bart-nodes: LoadRandom52Prompt failed to load, skipping it")
 
@@ -42,9 +42,9 @@ try:
     NODE_CLASS_MAPPINGS["YuE2ModelLoader"] = YuE2ModelLoader
     NODE_CLASS_MAPPINGS["YuE2Plan"] = YuE2Plan
     NODE_CLASS_MAPPINGS["YuE2Generate"] = YuE2Generate
-    NODE_DISPLAY_NAME_MAPPINGS["YuE2ModelLoader"] = "YuE2 Model Loader \U0001f3b5"
-    NODE_DISPLAY_NAME_MAPPINGS["YuE2Plan"] = "YuE2 Plan Score \U0001f3b5"
-    NODE_DISPLAY_NAME_MAPPINGS["YuE2Generate"] = "YuE2 Generate Song \U0001f3b5"
+    NODE_DISPLAY_NAME_MAPPINGS["YuE2ModelLoader"] = "Bart's YuE2 Model Loader \U0001f3b5"
+    NODE_DISPLAY_NAME_MAPPINGS["YuE2Plan"] = "Bart's YuE2 Plan Score \U0001f3b5"
+    NODE_DISPLAY_NAME_MAPPINGS["YuE2Generate"] = "Bart's YuE2 Generate Song \U0001f3b5"
 except Exception:
     logger.exception("comfyui-bart-nodes: YuE2 nodes failed to load, skipping them")
 
@@ -52,7 +52,7 @@ try:
     from .anatomy.nodes import AnatomyDefectFilter
 
     NODE_CLASS_MAPPINGS["AnatomyDefectFilter"] = AnatomyDefectFilter
-    NODE_DISPLAY_NAME_MAPPINGS["AnatomyDefectFilter"] = "Anatomy Defect Filter (Ollama) \U0001f50d"
+    NODE_DISPLAY_NAME_MAPPINGS["AnatomyDefectFilter"] = "Bart's Anatomy Defect Filter (Ollama) \U0001f50d"
 except Exception:
     logger.exception("comfyui-bart-nodes: AnatomyDefectFilter failed to load, skipping it")
 

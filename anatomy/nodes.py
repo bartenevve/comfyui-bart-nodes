@@ -101,7 +101,7 @@ class AnatomyDefectFilter:
     RETURN_TYPES = ("IMAGE", "IMAGE", "STRING", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("passed", "failed", "report", "report_json", "passed_indices", "failed_indices")
     FUNCTION = "filter"
-    CATEGORY = "image/quality"
+    CATEGORY = "Bart's nodes/Image"
 
     def filter(
         self,

@@ -29,7 +29,7 @@ class LoadRandomImage:
     RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING")
     RETURN_NAMES = ("IMAGE", "MASK", "filename", "directory")
     FUNCTION = "load_image"
-    CATEGORY = "image"
+    CATEGORY = "Bart's nodes/Image"
 
     def load_image(
         self,

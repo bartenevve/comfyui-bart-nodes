@@ -33,7 +33,7 @@ Nothing in this file should `import torch`, `import aiohttp`, or anything else h
 Match the conventions already established by the root `nodes.py`:
 
 - `INPUT_TYPES()` classmethod; put anything that needs per-node identity (a sequential "advance to next" pointer, a running total, etc.) behind a `hidden: {"unique_id": "UNIQUE_ID"}` entry — see [Stateful/sequential behavior](#statefulsequential-behavior-race-safety) below.
-- `RETURN_TYPES` / `RETURN_NAMES` / `FUNCTION` / `CATEGORY`.
+- `RETURN_TYPES` / `RETURN_NAMES` / `FUNCTION` / `CATEGORY`. Category is `Bart's nodes/<Image|Text|Audio>` and the display name starts with `Bart's `, so every node of the pack is found by searching "bart" and sits in one menu folder.
 - `IS_CHANGED` — if the node has any "changes every run" mode (random pick, auto-advance), return `float("nan")` for that mode so ComfyUI never caches a stale result; otherwise hash the actual inputs that determine output identity (see the "why hash `directory` too" note in the root `nodes.py`'s history — hashing only `filename` and not `directory` was a real bug there).
 - `VALIDATE_INPUTS` — reject invalid input *combinations* here (e.g. two mutually-exclusive checkboxes both true), not just per-field checks. This runs server-side regardless of how the prompt was submitted (UI, a hand-edited workflow.json, or a raw API POST), so it's the actual enforcement point — don't rely on frontend JS alone for anything that must never reach execution.
 
@@ -67,7 +67,7 @@ try:
     from .<subpkg> import routes as <subpkg>_routes  # noqa: F401  registers /<your_prefix>
 
     NODE_CLASS_MAPPINGS["<NodeClassName>"] = <NodeClassName>
-    NODE_DISPLAY_NAME_MAPPINGS["<NodeClassName>"] = "<Display Name> \U0001f3b2"
+    NODE_DISPLAY_NAME_MAPPINGS["<NodeClassName>"] = "Bart's <Display Name> \U0001f3b2"
 except Exception:
     logger.exception("comfyui-bart-nodes: <NodeClassName> failed to load, skipping it")
 ```

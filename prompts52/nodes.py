@@ -34,7 +34,7 @@ class LoadRandom52Prompt:
     RETURN_TYPES = ("STRING", "STRING", "INT")
     RETURN_NAMES = ("prompt", "generator", "seed")
     FUNCTION = "generate"
-    CATEGORY = "text"
+    CATEGORY = "Bart's nodes/Text"
 
     def generate(
         self,

@@ -1,21 +1,23 @@
 # comfyui-bart-nodes
 
+Every node is named `Bart's ...` (search for "bart" to list them all) and sits under the **Bart's nodes** category, split into `Image`, `Text` and `Audio`.
+
 Nodes that pick *what* to load for you, instead of making you point at one thing:
 
 | Node | Picks from | Manual / random / stepping |
 | --- | --- | --- |
-| **Load Random Image 🎲** (`LoadRandomImage`) | an **arbitrary directory** on disk (not just the managed `ComfyUI/input`) | filename dropdown / random / next in alphabetical order |
-| **Load Random Booru Image 🎲** (`LoadRandomBooruImage`) | a **booru tag search** (currently Gelbooru) | position in results / random / next position |
-| **Load Random Prompt (52prompts) 🎲** (`LoadRandom52Prompt`) | one of the 20 **text prompt generators** on [52prompts.com](https://52prompts.com/), chosen from a dropdown | seed / random each run |
+| **Bart's Load Random Image 🎲** (`LoadRandomImage`) | an **arbitrary directory** on disk (not just the managed `ComfyUI/input`) | filename dropdown / random / next in alphabetical order |
+| **Bart's Load Random Booru Image 🎲** (`LoadRandomBooruImage`) | a **booru tag search** (currently Gelbooru) | position in results / random / next position |
+| **Bart's Load Random Prompt (52prompts) 🎲** (`LoadRandom52Prompt`) | one of the 20 **text prompt generators** on [52prompts.com](https://52prompts.com/), chosen from a dropdown | seed / random each run |
 
-The two image nodes live in category `image`, the prompt node in `text`. All three share the same UI conventions (🎲 button that works without executing the graph, preview that survives a workflow reload).
+The two image nodes live in `Bart's nodes/Image`, the prompt node in `Bart's nodes/Text`. All three share the same UI conventions (🎲 button that works without executing the graph, preview that survives a workflow reload).
 
 Two more groups do something different — they *process* or *generate* rather than pick:
 
 | Node | Does | Needs |
 | --- | --- | --- |
-| **Anatomy Defect Filter (Ollama) 🔍** (`AnatomyDefectFilter`, category `image/quality`) — [details](#anatomy-defect-filter-ollama-) | splits images into `passed` / `failed` by asking an Ollama vision model about anatomy defects (extra limbs, wrong finger count, ...) | an Ollama server with a chat-capable vision model |
-| **YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `audio/yue2`) — [details](#yue2-music-generation-) | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score between planning and rendering | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon, slowly) — real requirements the other nodes don't have |
+| **Bart's Anatomy Defect Filter (Ollama) 🔍** (`AnatomyDefectFilter`, category `Bart's nodes/Image`) — [details](#anatomy-defect-filter-ollama-) | splits images into `passed` / `failed` by asking an Ollama vision model about anatomy defects (extra limbs, wrong finger count, ...) | an Ollama server with a chat-capable vision model |
+| **Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `Bart's nodes/Audio`) — [details](#yue2-music-generation-) | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score between planning and rendering | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon, slowly) — real requirements the other nodes don't have |
 
 ## Install (manual / from archive)
 
@@ -176,7 +178,7 @@ It needs a **chat-capable vision model** (`qwen3-vl`, `llama3.2-vision`, `gemma3
 
 ## YuE2 Music Generation 🎵
 
-Wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B): style + lyrics in, a full stereo song out. Three nodes in category `audio/yue2`:
+Wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B): style + lyrics in, a full stereo song out. Three nodes in category `Bart's nodes/Audio`:
 
 | Node | Does |
 | --- | --- |

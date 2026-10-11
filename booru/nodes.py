@@ -30,7 +30,7 @@ class LoadRandomBooruImage:
     RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING", "STRING", "INT")
     RETURN_NAMES = ("IMAGE", "MASK", "post_id", "post_tags", "post_url", "index")
     FUNCTION = "load_image"
-    CATEGORY = "image"
+    CATEGORY = "Bart's nodes/Image"
 
     def load_image(
         self,

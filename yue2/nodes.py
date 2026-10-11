@@ -139,7 +139,7 @@ class YuE2ModelLoader:
     RETURN_TYPES = ("YUE2_PIPELINE",)
     RETURN_NAMES = ("pipeline",)
     FUNCTION = "load"
-    CATEGORY = "audio/yue2"
+    CATEGORY = "Bart's nodes/Audio"
 
     def load(self, vae, device):
         return (_get_pipeline(vae, device),)
@@ -168,7 +168,7 @@ class YuE2Plan:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("abc",)
     FUNCTION = "plan"
-    CATEGORY = "audio/yue2"
+    CATEGORY = "Bart's nodes/Audio"
 
     def plan(self, pipeline, style, lyrics, seed, max_abc_tokens=DEFAULT_MAX_ABC_TOKENS):
         plan = _run_interruptible(
@@ -213,7 +213,7 @@ class YuE2Generate:
     RETURN_TYPES = ("AUDIO", "STRING")
     RETURN_NAMES = ("audio", "abc")
     FUNCTION = "generate"
-    CATEGORY = "audio/yue2"
+    CATEGORY = "Bart's nodes/Audio"
 
     @classmethod
     def VALIDATE_INPUTS(cls, cot=None, abc=None):
