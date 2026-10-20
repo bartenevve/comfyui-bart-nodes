@@ -65,6 +65,14 @@ try:
 except Exception:
     logger.exception("comfyui-bart-nodes: MiniMaxH3Prompt failed to load, skipping it")
 
+try:
+    from .smartload.nodes import SmartLoadImage
+
+    NODE_CLASS_MAPPINGS["SmartLoadImage"] = SmartLoadImage
+    NODE_DISPLAY_NAME_MAPPINGS["SmartLoadImage"] = "Bart's Smart Load Image (Crop) \u2702\ufe0f"
+except Exception:
+    logger.exception("comfyui-bart-nodes: SmartLoadImage failed to load, skipping it")
+
 WEB_DIRECTORY = "./js"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

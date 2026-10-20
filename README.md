@@ -16,6 +16,7 @@ Two more groups do something different — they *process* or *generate* rather t
 
 | Node | Does | Needs |
 | --- | --- | --- |
+| **Bart's Smart Load Image (Crop) ✂️** (`SmartLoadImage`, category `Bart's nodes/Image`) — [details](#smart-load-image-crop) | loads an image and lets you crop it right on the node; only the selected part is output | nothing beyond ComfyUI |
 | **Bart's Anatomy Defect Filter (Ollama) 🔍** (`AnatomyDefectFilter`, category `Bart's nodes/Image`) — [details](#anatomy-defect-filter-ollama-) | splits images into `passed` / `failed` by asking an Ollama vision model about anatomy defects (extra limbs, wrong finger count, ...) | an Ollama server with a chat-capable vision model |
 | **Bart's MiniMax H3 Prompt (Ollama) 🎬** (`MiniMaxH3Prompt`, category `Bart's nodes/Text`) — [details](#minimax-h3-prompt-ollama-) | writes ready-to-use prompts for the MiniMax H3 video model with a local Ollama LLM, from a short request (any language); a Generate button fills the result without running the graph | an Ollama server + a chat model (non-thinking instruct models work best) |
 | **Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `Bart's nodes/Audio`) — [details](#yue2-music-generation-) | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score between planning and rendering | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon, slowly) — real requirements the other nodes don't have |
@@ -63,6 +64,27 @@ The node's preview shows what **actually** got loaded on the last run (survives 
 **Outputs:** `IMAGE`, `MASK`, `filename` (the file that was actually loaded this run), `directory` (the resolved absolute directory path this run used).
 
 ---
+
+## Smart Load Image (Crop)
+
+Like the stock Load Image, plus a crop editor on the node: pick a file, frame the part you want, and **only that part leaves the node**.
+
+| Part | What it does |
+| --- | --- |
+| `image` + **📁 Upload image** | Files from ComfyUI's `input` folder. Upload a new one with the button or **drop an image on the node** - it is saved to `input` and selected. The preview comes from ComfyUI's own `/view`; the node adds no routes for serving files. |
+| the preview | **Drag on empty space** to draw a crop box, **drag inside** it to move it, **drag a handle** (corners and sides) to resize. The area outside is dimmed, thirds guides are drawn, and the info line shows `900×600 → 471×337 at (163, 142) · 1.398`. |
+| `crop_x`, `crop_y`, `crop_width`, `crop_height` | The crop in **pixels of the original image**. The editor writes them while you drag; you can also type them, or **link** them from other nodes. `crop_width` or `crop_height` of **0 = no crop** (the whole image, which is the default). A box sticking out of the image is cut at its edge instead of failing, so a saved crop still works if the file is later replaced by a smaller one. |
+| `aspect_lock` | `free`, `original`, `1:1`, `4:3`, `3:4`, `3:2`, `2:3`, `16:9`, `9:16`, `21:9`, `9:21`. While it is not `free`, drawing and resizing keep the ratio, and picking one reshapes the current box (shrinking it around its centre, never growing). |
+| `snap_to` | `1`, `8`, `16`, `32`, `64`: width and height snap to multiples of it (handy for diffusion models). With a ratio lock and a grid the closest pair on the grid is chosen, so 16:9 on a 64 grid becomes 1024×576 when it fits and a near ratio like 896×512 when it doesn't. |
+| **⤢ Full image** / **▣ Fit aspect** | Remove the crop / make the largest box of the chosen ratio, centred. |
+
+**Outputs:** `IMAGE` and `MASK` (from the alpha channel, like Load Image) of the cropped part only, `width` and `height` of that part, `filename`. Animated files (GIF/WebP) are cropped frame by frame with the same box.
+
+Notes:
+- The crop is applied **after** EXIF rotation, the same way the browser shows the preview, so what you frame is what you get. Verified on a photo stored sideways with an EXIF orientation tag.
+- Choosing a different file resets the crop to "no crop".
+- The editor shows the crop widgets' own values. If you link a crop number from another node, the link wins when the graph runs, but the preview box keeps showing the widget's value.
+- Files outside ComfyUI's `input` folder: use [Load Random Image](#load-random-image-) for an arbitrary directory (no crop there).
 
 ## Load Random Booru Image 🎲
 
@@ -315,8 +337,9 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 | `07_yue2_plan_edit_generate.json` | YuE2 plan → editable ABC score → generate (the agentic-editing loop) |
 | `08_yue2_cover_from_abc.json` | YuE2 cover mode: an externally obtained ABC transcription + `cot=melody` |
 | `09_minimax_h3_prompt.json` | MiniMax H3 prompt: request in, Generate button, prompt + report previews |
+| `10_smart_load_image.json` | Smart Load Image: crop on the node, cropped preview + width / height |
 
-01–05 and 09 were loaded back into a real ComfyUI frontend and run from its Run button; 06–08 load fine but need the `yue2` package and a big GPU to execute (see the YuE2 section).
+01–05, 09 and 10 were loaded back into a real ComfyUI frontend and run from its Run button; 06–08 load fine but need the `yue2` package and a big GPU to execute (see the YuE2 section).
 
 ---
 
@@ -336,7 +359,7 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 
 ## Tests
 
-The pure logic — file selection, booru position selection, the booru backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, the MiniMax H3 wrapper (against a faked Ollama), and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (270+, no torch, ComfyUI or network needed):
+The pure logic — file selection, booru position selection, the booru backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, the MiniMax H3 wrapper (against a faked Ollama), the crop box clamping and - under `node`, when installed - the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (290+, no torch, ComfyUI or network needed):
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -372,6 +395,9 @@ prompts52/
   fetch.py              urllib GET, per-host throttle, in-memory TTL cache
   nodes.py              LoadRandom52Prompt
   routes.py             /random_prompts52/pick, /generators
+smartload/
+  selection.py          pure logic: clamp_box() (crop inside the image), aspect-lock / snap choices
+  nodes.py              SmartLoadImage: input-folder file, EXIF transpose, crop per frame, IMAGE/MASK/width/height
 anatomy/
   selection.py          pure logic: check catalogue, prompt, verdict parsing, pass/fail decision, report
   ollama.py             stdlib client for Ollama's /api/chat (vision question -> answer text)
@@ -389,6 +415,7 @@ yue2/
 js/random_image.js      frontend: file dropdown, randomize button, drag & drop, preview
 js/random_booru.js      frontend: 🎲/↧ buttons, preview, info line, last_post_id persistence
 js/random_prompts52.js  frontend: 🎲/↧ buttons, per-generator widget show/hide, prompt display
+js/smart_load_image.js  frontend: crop editor (draw/move/resize, aspect lock, snap grid), upload + drag & drop
 js/minimax_h3.js        frontend: Generate/Regenerate button, stale-input hint, mode-dependent fields
 __init__.py             registration of all node families, each import isolated (see CONTRIBUTING.md)
 example_workflows/     one ready-to-load graph per node (listed by ComfyUI under Templates)
