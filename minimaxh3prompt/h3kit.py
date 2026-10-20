@@ -1151,8 +1151,10 @@ def main():
                             "image: subject scene style prop first_frame last_frame; "
                             "video: subject motion camera edit continue; audio: voice music_copy music_ref sound_copy")
 
-    p = sub.add_parser("build"); common(p)
-    p = sub.add_parser("run"); common(p)
+    p = sub.add_parser("build")
+    common(p)
+    p = sub.add_parser("run")
+    common(p)
     p.add_argument("--model", required=True)
     p.add_argument("--host", default="http://localhost:11434")
     p.add_argument("--think", action="store_true")
@@ -1162,8 +1164,13 @@ def main():
     p.add_argument("--num-ctx", type=int, default=8192)
     p.add_argument("--seed", type=int, default=None, help="sampling seed (default: Ollama picks one)")
     p.add_argument("--no-think", action="store_true", help="append Qwen3's /no_think switch to the last user message")
-    p = sub.add_parser("validate"); common(p); p.add_argument("file"); p.add_argument("--fix", action="store_true")
-    p = sub.add_parser("assemble"); common(p); p.add_argument("file")
+    p = sub.add_parser("validate")
+    common(p)
+    p.add_argument("file")
+    p.add_argument("--fix", action="store_true")
+    p = sub.add_parser("assemble")
+    common(p)
+    p.add_argument("file")
     sub.add_parser("export")
     a = ap.parse_args()
 
