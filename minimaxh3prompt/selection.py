@@ -19,7 +19,12 @@ NUMERIC = {
     "num_predict": (0, 0, 32768),
     "retries": (2, 0, 5),
     "timeout": (600, 10, 3600),
+    # pixels of the short side for the width/height outputs; the H3 nodes work in steps of 32
+    "short_side": (768, 256, 4096),
 }
+
+FPS = 24
+SIZE_STEP = 32
 TEXT_FIELDS = ["request", "triggers", "dialogue", "text", "image", "start", "end", "refs"]
 
 _CLIP_MARK = re.compile(r"^=== CLIP (\d+)(?: \((\d+) s\))? ===[ \t]*$", re.M)
@@ -81,6 +86,30 @@ def coerce_options(values):
     return out
 
 
+def frame_size(aspect, short_side):
+    """(width, height) for an `aspect` such as "16:9", the short side being `short_side` px.
+
+    Both sides are rounded DOWN to the H3 nodes' multiple of 32, so the frame
+    never exceeds the pixel budget the user asked for (16:9 at 768 gives
+    1344x768, which is also the H3 nodes' own default).
+    """
+    first, second = (int(part) for part in aspect.split(":"))
+    short = short_side // SIZE_STEP * SIZE_STEP
+    long_side = short * max(first, second) // min(first, second) // SIZE_STEP * SIZE_STEP
+    return (long_side, short) if first >= second else (short, long_side)
+
+
+def clip_durations(timed, total):
+    """Seconds per clip for the `duration` / `frames` outputs.
+
+    `timed` is split_timed_clips()'s list. A clip whose marker carries no
+    duration (hand-edited text) gets an even share of `total`; a lone clip is
+    the whole `total`.
+    """
+    even = max(1, round(total / max(len(timed), 1)))
+    return [duration if duration else (total if len(timed) == 1 else even) for _, duration in timed]
+
+
 def join_clips(clips, durations=None):
     """Saved-text form of a result. One clip is stored bare; several get a marker line each."""
     if len(clips) == 1:
@@ -93,23 +122,29 @@ def join_clips(clips, durations=None):
     return "\n\n".join(parts)
 
 
+def split_timed_clips(text):
+    """split_clips() that also returns each clip's marker duration (None when it has none)."""
+    text = text.strip()
+    if not text:
+        return []
+    marks = list(_CLIP_MARK.finditer(text))
+    if not marks:
+        return [(text, None)]
+    pieces = [(text[: marks[0].start()], None)]
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        duration = int(mark.group(2)) if mark.group(2) else None
+        pieces.append((text[mark.end() : end], duration))
+    return [(piece.strip(), duration) for piece, duration in pieces if piece.strip()]
+
+
 def split_clips(text):
     """Inverse of join_clips; text with no marker is a single clip.
 
     Hand-edited saved text goes through here, so it is forgiving: whatever sits
     before the first marker is its own clip, empty clips are dropped.
     """
-    text = text.strip()
-    if not text:
-        return []
-    marks = list(_CLIP_MARK.finditer(text))
-    if not marks:
-        return [text]
-    pieces = [text[: marks[0].start()]]
-    for index, mark in enumerate(marks):
-        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
-        pieces.append(text[mark.end() : end])
-    return [piece.strip() for piece in pieces if piece.strip()]
+    return [clip for clip, _ in split_timed_clips(text)]
 
 
 def format_report(variant, clips, errors, warnings):

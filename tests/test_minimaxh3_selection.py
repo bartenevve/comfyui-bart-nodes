@@ -90,6 +90,51 @@ class TestClips(unittest.TestCase):
         self.assertEqual(selection.split_clips("see === CLIP 2 === above"), ["see === CLIP 2 === above"])
 
 
+class TestFrameSize(unittest.TestCase):
+    def test_common_aspects_at_768(self):
+        for aspect, expected in (("16:9", (1344, 768)), ("9:16", (768, 1344)), ("1:1", (768, 768)),
+                                 ("4:3", (1024, 768)), ("3:4", (768, 1024)), ("21:9", (1792, 768))):
+            with self.subTest(aspect=aspect):
+                self.assertEqual(selection.frame_size(aspect, 768), expected)
+
+    def test_sides_are_multiples_of_32_and_never_exceed_the_budget(self):
+        for aspect in selection.ASPECTS:
+            for short in (256, 480, 500, 720, 1000):
+                with self.subTest(aspect=aspect, short=short):
+                    width, height = selection.frame_size(aspect, short)
+                    self.assertEqual((width % 32, height % 32), (0, 0))
+                    self.assertLessEqual(min(width, height), short)
+
+    def test_orientation_follows_the_aspect(self):
+        width, height = selection.frame_size("9:16", 480)
+        self.assertLess(width, height)
+
+
+class TestTimedClips(unittest.TestCase):
+    def test_durations_come_from_the_markers(self):
+        text = selection.join_clips(["a", "b"], [10, 5])
+        self.assertEqual(selection.split_timed_clips(text), [("a", 10), ("b", 5)])
+
+    def test_bare_text_has_no_duration(self):
+        self.assertEqual(selection.split_timed_clips("one"), [("one", None)])
+        self.assertEqual(selection.split_timed_clips(""), [])
+
+    def test_clip_durations_fallbacks(self):
+        self.assertEqual(selection.clip_durations([("a", None)], 8), [8])
+        self.assertEqual(selection.clip_durations([("a", None), ("b", None)], 20), [10, 10])
+        self.assertEqual(selection.clip_durations([("a", 10), ("b", None)], 20), [10, 10])
+        self.assertEqual(selection.clip_durations([("a", 4), ("b", 6)], 99), [4, 6])
+
+
+class TestShortSideRange(unittest.TestCase):
+    def test_bounds(self):
+        selection.coerce_options({**VALID, "short_side": 256})
+        selection.coerce_options({**VALID, "short_side": 4096})
+        for bad in (255, 4097):
+            with self.assertRaises(selection.InputError):
+                selection.coerce_options({**VALID, "short_side": bad})
+
+
 class TestReport(unittest.TestCase):
     def test_ok(self):
         report = selection.format_report("t2va", 1, [], [])

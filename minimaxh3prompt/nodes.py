@@ -3,18 +3,21 @@ import hashlib
 from . import runner
 from .selection import (
     ASPECTS,
+    FPS,
     MAX_SEED,
     MODES,
     NUMERIC,
     VARIANTS,
     InputError,
-    split_clips,
+    clip_durations,
+    frame_size,
+    split_timed_clips,
 )
 
 _WIDGETS = (
     "ollama_url", "model", "request", "duration", "aspect", "mode", "variant", "seed",
     "triggers", "dialogue", "text", "image", "start", "end", "shots", "refs",
-    "temperature", "num_ctx", "num_predict", "retries", "timeout", "think", "append_no_think",
+    "temperature", "num_ctx", "num_predict", "retries", "timeout", "think", "append_no_think", "short_side",
 )
 
 
@@ -28,7 +31,7 @@ class MiniMaxH3Prompt:
         return {
             "required": {
                 "ollama_url": ("STRING", {"default": "http://localhost:11434"}),
-                "model": ("STRING", {"default": "qwen3.6:35b-a3b"}),
+                "model": ("STRING", {"default": "qwen3:4b-instruct"}),
                 "request": ("STRING", {"default": "", "multiline": True}),
                 "duration": number("duration"),
                 "aspect": (ASPECTS, {"default": "16:9"}),
@@ -59,23 +62,37 @@ class MiniMaxH3Prompt:
                 # the inputs it was made from (for the "inputs changed" hint).
                 "generated": ("STRING", {"default": "", "multiline": True}),
                 "generated_key": ("STRING", {"default": ""}),
+                # last on purpose: widgets_values are positional, so appending
+                # keeps workflows saved before this widget existed loading right
+                "short_side": number("short_side"),
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("prompt", "report")
-    # one prompt per clip: a single entry for everything but `story`
-    OUTPUT_IS_LIST = (True, False)
+    # new outputs are appended: links are saved by slot index, so inserting one
+    # in the middle would silently rewire existing workflows
+    RETURN_TYPES = ("STRING", "STRING", "INT", "INT", "INT", "INT", "INT")
+    RETURN_NAMES = ("prompt", "report", "duration", "frames", "width", "height", "seed")
+    # prompt, duration and frames are lists with one entry per clip (a single
+    # entry for everything but `story`), so a video node fed by them runs once
+    # per clip with that clip's own length; width, height and seed are shared
+    OUTPUT_IS_LIST = (True, False, True, True, False, False, False)
     FUNCTION = "run"
     CATEGORY = "Bart's nodes/Text"
 
     def run(self, ollama_url, model, request, duration, aspect, mode, variant, seed, generated="", generated_key="", **optional):
-        clips = split_clips(generated)
-        if clips:
+        width, height = frame_size(aspect, optional.get("short_side") or NUMERIC["short_side"][0])
+
+        def outputs(clips, report, durations):
+            frames = [d * FPS for d in durations]
+            return (clips, report, durations, frames, width, height, seed)
+
+        timed = split_timed_clips(generated)
+        if timed:
             # saved text wins, including hand edits; the Generate button is the
             # only thing that replaces it
+            clips = [clip for clip, _ in timed]
             report = f"reused the saved text ({len(clips)} clip{'s' if len(clips) != 1 else ''}), nothing generated"
-            return {"ui": {"report": [report]}, "result": (clips, report)}
+            return {"ui": {"report": [report]}, "result": outputs(clips, report, clip_durations(timed, duration))}
 
         values = dict(
             ollama_url=ollama_url, model=model, request=request, duration=duration, aspect=aspect,
@@ -87,7 +104,7 @@ class MiniMaxH3Prompt:
             raise RuntimeError(f"MiniMax H3 prompt: {exc}") from None
         return {
             "ui": {"generated": [result["text"]], "report": [result["report"]]},
-            "result": (result["clips"], result["report"]),
+            "result": outputs(result["clips"], result["report"], result["durations"]),
         }
 
     @classmethod

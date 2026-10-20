@@ -105,6 +105,7 @@ def generate(values):
     return {
         "variant": result["variant"],
         "clips": clips,
+        "durations": durations or [options["duration"]],
         "text": join_clips(clips, durations),
         "errors": errors,
         "warnings": warnings,

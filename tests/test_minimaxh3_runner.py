@@ -273,7 +273,7 @@ class TestNode(unittest.TestCase):
     def test_empty_saved_text_generates_and_reports_to_the_ui(self):
         with mock.patch.object(h3kit, "ollama_chat", FakeModel(PROMPT)):
             out = self.call()
-        clips, report = out["result"]
+        clips, report = out["result"][:2]
         self.assertEqual(len(clips), 1)
         self.assertEqual(out["ui"]["generated"], [clips[0]])
         self.assertIn("variant:", report)
@@ -284,8 +284,56 @@ class TestNode(unittest.TestCase):
                 self.call()
         self.assertIn("MiniMax H3 prompt", str(caught.exception))
 
-    def test_output_is_a_list_for_clips_and_a_single_report(self):
-        self.assertEqual(nodes.MiniMaxH3Prompt.OUTPUT_IS_LIST, (True, False))
+    def test_outputs_are_appended_after_the_original_two(self):
+        # links are stored by slot index: prompt and report must keep slots 0 and 1
+        node = nodes.MiniMaxH3Prompt
+        self.assertEqual(node.RETURN_NAMES, ("prompt", "report", "duration", "frames", "width", "height", "seed"))
+        self.assertEqual(node.RETURN_TYPES, ("STRING", "STRING", "INT", "INT", "INT", "INT", "INT"))
+        self.assertEqual(node.OUTPUT_IS_LIST, (True, False, True, True, False, False, False))
+
+    def test_saved_text_outputs_duration_frames_size_and_seed(self):
+        out = self.call(generated="my prompt", duration=9, aspect="9:16", seed=77, short_side=768)
+        prompt, report, duration, frames, width, height, seed = out["result"]
+        self.assertEqual((prompt, duration, frames), (["my prompt"], [9], [216]))
+        self.assertEqual((width, height, seed), (768, 1344, 77))
+
+    def test_short_side_defaults_when_the_widget_is_absent(self):
+        out = self.call(generated="x", aspect="16:9")  # a workflow saved before short_side existed
+        self.assertEqual(out["result"][4:6], (1344, 768))
+
+    def test_saved_story_outputs_one_duration_per_clip_from_the_markers(self):
+        text = selection.join_clips(["a", "b", "c"], [10, 10, 7])
+        out = self.call(generated=text, duration=27)
+        self.assertEqual(out["result"][2], [10, 10, 7])
+        self.assertEqual(out["result"][3], [240, 240, 168])
+
+    def test_saved_clips_without_marker_durations_share_the_total(self):
+        out = self.call(generated="=== CLIP 1 ===\na\n\n=== CLIP 2 ===\nb", duration=20)
+        self.assertEqual(out["result"][2], [10, 10])
+
+    def test_generated_run_outputs_the_requested_duration(self):
+        with mock.patch.object(h3kit, "ollama_chat", FakeModel(PROMPT)):
+            out = self.call(duration=8, seed=5)
+        self.assertEqual(out["result"][2:4], ([8], [192]))
+        self.assertEqual(out["result"][6], 5)
+
+    def test_generated_story_outputs_its_clip_durations(self):
+        plan = json.dumps(
+            {
+                "style": "Live-action, cinematic",
+                "character": "a cat",
+                "clips": [{"beat": "b", "start": "s", "end": "e", "lines": []} for _ in range(3)],
+            }
+        )
+
+        def model(messages, name, host="", think=False, fmt=None, **kw):
+            return plan if fmt is not None else PROMPT
+
+        with mock.patch.object(h3kit, "ollama_chat", model):
+            out = self.call(duration=30, retries=0)
+        self.assertEqual(len(out["result"][0]), 3)
+        self.assertEqual(out["result"][2], [10, 10, 10])
+        self.assertEqual(out["result"][3], [240, 240, 240])
 
     def test_is_changed_follows_saved_text_only_when_present(self):
         is_changed = nodes.MiniMaxH3Prompt.IS_CHANGED

@@ -215,7 +215,7 @@ Turns a short request ("an old fisherman hauls a net at dawn, gulls circling the
 
 | Widget | Meaning |
 | --- | --- |
-| `ollama_url`, `model` | The Ollama server (http/https) and a chat model. Tested: Qwen 3.6 / 3.8 class models with thinking off (200-400 tokens per answer). For 1-4B models use `variant = slots`. |
+| `ollama_url`, `model` | The Ollama server (http/https) and a chat model. Tested: `qwen3:4b-instruct`, Qwen 3.6 / 3.8 class models with thinking off (200-400 tokens per answer). For the very smallest models (1-2B) try `variant = slots`. |
 | `request` | What to film, in any language. |
 | `duration`, `aspect`, `mode`, `variant`, `shots` | `duration` 4-120 s (over 15 s = `story`, see below); `mode` T2VA / I2VA / FL2VA / L2VA; `variant` `auto` picks `t2va` / `i2va` / `fl2va` / `talking` / `product` / `ref` / `story` from the inputs, or force one (`slots` is never picked automatically); `shots` 0 = automatic, 1-3 forces the count. |
 | `triggers` | `style:retro_vhs, subject:sks_man, object:avr_bot, place:alps_road, plain_style_word` - each placed exactly once. |
@@ -223,10 +223,24 @@ Turns a short request ("an old fisherman hauls a net at dawn, gulls circling the
 | `image` / `start` / `end` | Shown only for the modes that read them (I2VA first frame; FL2VA start + end; L2VA end). |
 | `refs` | Ref2VA references, **one per line**: `image\|subject\|young woman in a green parka\|S1`, `video\|motion\|...`, `audio\|voice\|...`. They are text descriptions - the actual image/video/audio files go into H3 itself. Shown for `auto` / `ref`. |
 | `seed` | Sampling seed. The button sets a new one on every press; for run-time generation `control after generate` behaves as usual. |
+| `short_side` | Pixels of the frame's short side for the `width` / `height` outputs (256-4096, default 768). Both sides are rounded **down** to a multiple of 32 (what the H3 nodes use), so 16:9 at 768 gives 1344×768 - the H3 nodes' own default. Last in the widget list on purpose (saved workflows are positional). |
 | `temperature`, `num_ctx`, `num_predict`, `retries`, `timeout`, `think` | Ollama options; `retries` = how many times the kit re-asks with the validator's error list (0-5); `num_predict` 0 = the model's default. |
 | `append_no_think` | Appends Qwen3's `/no_think` switch to the last user message. Keep it on for Qwen3-family models; turn it off for other models if you see the literal text in their output. |
 
-**Outputs:** `prompt` (`STRING`, a **list**: one entry per clip - a single entry for everything except `story`) and `report` (variant, clip count, validator result, warnings such as "too much dialogue for this duration").
+**Outputs** (new ones are always appended, so existing links keep their slots):
+
+| Output | Type | Meaning |
+| --- | --- | --- |
+| `prompt` | `STRING` list | One entry per clip - a single entry for everything except `story`. |
+| `report` | `STRING` | Variant, clip count, validator result, warnings such as "too much dialogue for this duration". |
+| `duration` | `INT` list | Seconds, one per clip (`story` clips get their own, about 10 s each; otherwise the `duration` widget). |
+| `frames` | `INT` list | `duration × 24` (24 fps). The H3 nodes snap a length up to their 17k+5 frame grid themselves. |
+| `width`, `height` | `INT` | From `aspect` + `short_side`; 9:16 at 512 gives 512×896. |
+| `seed` | `INT` | The seed this run used. |
+
+The list outputs make a video node fed by `prompt` + `duration` run once per clip with that clip's own length; `width`, `height` and `seed` are shared by all clips. Wire them into a video node's duration / size / seed inputs (for the Cloud and API H3 nodes, whose `aspect_ratio` is a dropdown, set it by hand - a `STRING` can't feed a dropdown).
+
+**Linked inputs.** Any widget can be turned into an input and fed by a link (for example one shared `duration` for this node and the video node). The graph uses the linked value. The **Generate button** runs outside the graph, so it can only read a linked value from a Primitive-style source node (`Int`, `Primitive`, ...) - if a widget is fed by a node whose output is computed when the graph runs, the button says so and does nothing; unlink it or use a Primitive node.
 
 **`story` (over 15 s).** A planner splits the video into clips of about 10 s, then each clip is written as its own prompt with the characters carried over and "end of clip N = start of clip N+1". In `generated` the clips are separated by `=== CLIP 2 (10 s) ===` marker lines (edit them freely; text before the first marker counts as a clip too); `prompt` outputs one string per clip, so downstream nodes run once per clip.
 
@@ -236,7 +250,7 @@ Turns a short request ("an old fisherman hauls a net at dawn, gulls circling the
 - **Thinking models.** `qwen3-vl:8b` was tried here: it ignores both `think: false` and `/no_think` with this kit's system prompt and spent its whole token budget reasoning (700 and even 3000 tokens, no answer). The node then reports an empty answer with a hint. Use a non-thinking instruct model, or a thinking model with a large `num_predict` and patience.
 - **Interrupt.** ComfyUI's Interrupt doesn't cancel a generation that is already waiting on Ollama (the request is a blocking HTTP call); it ends at the answer or at `timeout`.
 - `minimaxh3prompt/h3kit.py` is the kit as delivered plus a small patch: `ollama_chat()` accepts `seed` and `no_think` (and the CLI has `--seed` / `--no-think`). Everything else is untouched, so a newer kit version can be dropped in and the patch re-applied.
-- Verified: the whole pipeline against a real Ollama (Qwen3.8 27B, thinking off: valid on the first attempt, 30-110 s), and the button / saved text / generate-on-run / stale hint / mode-dependent fields / save-and-reload behaviour in a real ComfyUI frontend against a mock Ollama. Not verified: output quality on small (1-4B) models via `slots`.
+- Verified: the whole pipeline against a real Ollama - `qwen3:4b-instruct` (4 GB, 4-10 s per prompt, validator OK on the first attempt, a different take per seed, `story` with 3 clips) and Qwen3.8 27B (valid on the first attempt, 30-110 s) - and the button / saved text / generate-on-run / stale hint / mode-dependent fields / save-and-reload behaviour in a real ComfyUI frontend against a mock Ollama. Not verified: `variant = slots` on 1-4B models, and linking `duration` / size / seed into the real MiniMax video nodes (their inputs were read from the node definitions only).
 
 ## YuE2 Music Generation 🎵
 
