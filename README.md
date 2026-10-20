@@ -17,6 +17,7 @@ Two more groups do something different — they *process* or *generate* rather t
 | Node | Does | Needs |
 | --- | --- | --- |
 | **Bart's Anatomy Defect Filter (Ollama) 🔍** (`AnatomyDefectFilter`, category `Bart's nodes/Image`) — [details](#anatomy-defect-filter-ollama-) | splits images into `passed` / `failed` by asking an Ollama vision model about anatomy defects (extra limbs, wrong finger count, ...) | an Ollama server with a chat-capable vision model |
+| **Bart's MiniMax H3 Prompt (Ollama) 🎬** (`MiniMaxH3Prompt`, category `Bart's nodes/Text`) — [details](#minimax-h3-prompt-ollama-) | writes ready-to-use prompts for the MiniMax H3 video model with a local Ollama LLM, from a short request (any language); a Generate button fills the result without running the graph | an Ollama server + a chat model (non-thinking instruct models work best) |
 | **Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵** (category `Bart's nodes/Audio`) — [details](#yue2-music-generation-) | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score between planning and rendering | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon, slowly) — real requirements the other nodes don't have |
 
 ## Install (manual / from archive)
@@ -197,6 +198,46 @@ It needs a **chat-capable vision model** (`qwen3-vl`, `llama3.2-vision`, `gemma3
 
 ---
 
+## MiniMax H3 Prompt (Ollama) 🎬
+
+Turns a short request ("an old fisherman hauls a net at dawn, gulls circling the boat") into a finished prompt for the **MiniMax H3** video model, using a local Ollama model. The heavy lifting is the bundled **h3kit** ([minimaxh3prompt/](minimaxh3prompt/), docs in [README_ru.md](minimaxh3prompt/README_ru.md), test log in [TESTS.md](minimaxh3prompt/TESTS.md)): Python computes the shot plan, cut times, picture-binding line, trigger placement and dialogue blocks, the LLM only writes the scene, then Python auto-fixes the answer, validates it and retries with the concrete error list. The node is the ComfyUI wrapper around it.
+
+### Generate button, saved text, running the graph
+
+| Step | What happens |
+| --- | --- |
+| **✨ Generate** | Runs the whole pipeline right now, **without executing the graph**, and fills the `generated` box. Every press picks a **new seed**, so **🔄 Regenerate** gives another take. The server round trip runs off the event loop; the button shows `⏳ Generating…` and ignores clicks until it is done. The info line shows the variant, clip count and validator result (or the error). |
+| `generated` | The result. Saved with the workflow, **editable by hand**. |
+| Run the graph, `generated` not empty | The saved text is output **as is**: nothing is sent to Ollama, hand edits included. This also holds when you changed the request after generating - the node never silently replaces text you may have edited; it shows `⚠ inputs changed since this text was generated` instead, and **Regenerate** redoes it. |
+| Run the graph, `generated` empty | The run generates first (with the `seed` widget), outputs the result and writes it into `generated`, so the next run reuses it. |
+
+### Widgets
+
+| Widget | Meaning |
+| --- | --- |
+| `ollama_url`, `model` | The Ollama server (http/https) and a chat model. Tested: Qwen 3.6 / 3.8 class models with thinking off (200-400 tokens per answer). For 1-4B models use `variant = slots`. |
+| `request` | What to film, in any language. |
+| `duration`, `aspect`, `mode`, `variant`, `shots` | `duration` 4-120 s (over 15 s = `story`, see below); `mode` T2VA / I2VA / FL2VA / L2VA; `variant` `auto` picks `t2va` / `i2va` / `fl2va` / `talking` / `product` / `ref` / `story` from the inputs, or force one (`slots` is never picked automatically); `shots` 0 = automatic, 1-3 forces the count. |
+| `triggers` | `style:retro_vhs, subject:sks_man, object:avr_bot, place:alps_road, plain_style_word` - each placed exactly once. |
+| `dialogue`, `text` | Lines split by newline or ` \| `, optional `S2:` speaker and `[Spanish]` language prefix; `text` is on-screen text (the only thing that gets quotes). |
+| `image` / `start` / `end` | Shown only for the modes that read them (I2VA first frame; FL2VA start + end; L2VA end). |
+| `refs` | Ref2VA references, **one per line**: `image\|subject\|young woman in a green parka\|S1`, `video\|motion\|...`, `audio\|voice\|...`. They are text descriptions - the actual image/video/audio files go into H3 itself. Shown for `auto` / `ref`. |
+| `seed` | Sampling seed. The button sets a new one on every press; for run-time generation `control after generate` behaves as usual. |
+| `temperature`, `num_ctx`, `num_predict`, `retries`, `timeout`, `think` | Ollama options; `retries` = how many times the kit re-asks with the validator's error list (0-5); `num_predict` 0 = the model's default. |
+| `append_no_think` | Appends Qwen3's `/no_think` switch to the last user message. Keep it on for Qwen3-family models; turn it off for other models if you see the literal text in their output. |
+
+**Outputs:** `prompt` (`STRING`, a **list**: one entry per clip - a single entry for everything except `story`) and `report` (variant, clip count, validator result, warnings such as "too much dialogue for this duration").
+
+**`story` (over 15 s).** A planner splits the video into clips of about 10 s, then each clip is written as its own prompt with the characters carried over and "end of clip N = start of clip N+1". In `generated` the clips are separated by `=== CLIP 2 (10 s) ===` marker lines (edit them freely; text before the first marker counts as a clip too); `prompt` outputs one string per clip, so downstream nodes run once per clip.
+
+### Notes
+
+- If the validator still finds problems after the retries, the best attempt is returned anyway and the problems are listed in `report` - a prompt that is 95% right is more useful to edit than an error.
+- **Thinking models.** `qwen3-vl:8b` was tried here: it ignores both `think: false` and `/no_think` with this kit's system prompt and spent its whole token budget reasoning (700 and even 3000 tokens, no answer). The node then reports an empty answer with a hint. Use a non-thinking instruct model, or a thinking model with a large `num_predict` and patience.
+- **Interrupt.** ComfyUI's Interrupt doesn't cancel a generation that is already waiting on Ollama (the request is a blocking HTTP call); it ends at the answer or at `timeout`.
+- `minimaxh3prompt/h3kit.py` is the kit as delivered plus a small patch: `ollama_chat()` accepts `seed` and `no_think` (and the CLI has `--seed` / `--no-think`). Everything else is untouched, so a newer kit version can be dropped in and the patch re-applied.
+- Verified: the whole pipeline against a real Ollama (Qwen3.8 27B, thinking off: valid on the first attempt, 30-110 s), and the button / saved text / generate-on-run / stale hint / mode-dependent fields / save-and-reload behaviour in a real ComfyUI frontend against a mock Ollama. Not verified: output quality on small (1-4B) models via `slots`.
+
 ## YuE2 Music Generation 🎵
 
 Wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B): style + lyrics in, a full stereo song out. Three nodes in category `Bart's nodes/Audio`:
@@ -259,8 +300,9 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 | `06_yue2_text_to_song.json` | YuE2 Model Loader → Generate Song → Save Audio |
 | `07_yue2_plan_edit_generate.json` | YuE2 plan → editable ABC score → generate (the agentic-editing loop) |
 | `08_yue2_cover_from_abc.json` | YuE2 cover mode: an externally obtained ABC transcription + `cot=melody` |
+| `09_minimax_h3_prompt.json` | MiniMax H3 prompt: request in, Generate button, prompt + report previews |
 
-01–05 were loaded back into a real ComfyUI frontend and run from its Run button; 06–08 load fine but need the `yue2` package and a big GPU to execute (see the YuE2 section).
+01–05 and 09 were loaded back into a real ComfyUI frontend and run from its Run button; 06–08 load fine but need the `yue2` package and a big GPU to execute (see the YuE2 section).
 
 ---
 
@@ -272,13 +314,15 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 
 **52prompts node.** Same outbound-request caveat as the booru node: the site sees your server's IP, and `/random_prompts52/pick` is unauthenticated like everything else here. It takes a generator **label** out of a fixed table, never a URL, and the script URL it ends up fetching must be on the site's CDN host, so these endpoints cannot be pointed at an arbitrary target (no SSRF). The fetched script is **not** executed as JavaScript — it is run by `prompts52/jsmini.py`, which has no filesystem, network or `eval` surface at all: the worst a rewritten generator can do is raise an error or return odd text.
 
-**Anatomy filter node.** It sends your images to whatever `ollama_url` the workflow says, from the ComfyUI host — so images leave the machine if that server is remote, and a workflow someone else wrote can point it at any host:port reachable from yours (it only ever POSTs to `/api/chat` on that base URL). The node adds **no HTTP routes**: a frontend helper that took the URL from the browser (for example to fill a model dropdown) would turn ComfyUI into an open proxy, which is why `model` is a plain text field.
+**MiniMax H3 prompt node.** Same outbound-request caveat as the anatomy filter (it POSTs your request text to the `ollama_url` of the workflow, from the ComfyUI host), **plus one HTTP route**: `POST /minimax_h3/generate` takes the widget values - including `ollama_url` - from the caller, so anyone who can reach ComfyUI's port can make the server send a JSON POST to `/api/chat` on any http(s) host:port it can reach (loopback and LAN included) and read back the parsed prompt text or an error message. Mitigations: only http/https, a fixed path, a timeout, only the parsed `message.content` is returned (never a raw response), and every other value is range-checked. It is the same exposure class as the other routes here (ComfyUI has no auth by default); if the port is reachable by people you don't trust, don't leave this node installed.
+
+**Anatomy filter node.** It sends your images to whatever `ollama_url` the workflow says, from the ComfyUI host — so images leave the machine if that server is remote, and a workflow someone else wrote can point it at any host:port reachable from yours (it only ever POSTs to `/api/chat` on that base URL). The anatomy node adds **no HTTP routes** (the MiniMax node's button route is described above): a frontend helper that took the URL from the browser (for example to fill a model dropdown) would turn ComfyUI into an open proxy, which is why `model` is a plain text field.
 
 **If ComfyUI is exposed on a LAN or the internet** (not just `127.0.0.1`), keep this in mind and restrict access at the network level (VPN, an authenticating reverse proxy, firewall) rather than assuming ComfyUI or these nodes restrict anything on their own. This isn't unique to this pack either — ComfyUI itself ships with no authentication on any of its endpoints by default.
 
 ## Tests
 
-The pure logic — file selection, booru position selection, the booru backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (230+, no torch, ComfyUI or network needed):
+The pure logic — file selection, booru position selection, the booru backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, the MiniMax H3 wrapper (against a faked Ollama), and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (270+, no torch, ComfyUI or network needed):
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -318,12 +362,20 @@ anatomy/
   selection.py          pure logic: check catalogue, prompt, verdict parsing, pass/fail decision, report
   ollama.py             stdlib client for Ollama's /api/chat (vision question -> answer text)
   nodes.py              AnatomyDefectFilter: tensor -> JPEG, loop over the batch, split, empty-branch handling
+minimaxh3prompt/
+  h3kit.py              the prompt kit (stdlib only, also a CLI): shot plan, request builder, auto-fix, validator, Ollama client
+  prompts/              the kit's system prompts (per variant), TESTS.md / README_ru.md next to it
+  selection.py          pure logic: widget coercion/ranges, URL check, clip join/split, report text
+  runner.py             kit call with options + error mapping (HTTP/timeout/unreachable -> H3Error)
+  nodes.py              MiniMaxH3Prompt: saved-text-wins logic, IS_CHANGED, VALIDATE_INPUTS
+  routes.py             POST /minimax_h3/generate (the Generate button)
 yue2/
   selection.py          pure logic: artifact-file discovery, generate() kwargs assembly
   nodes.py              YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
 js/random_image.js      frontend: file dropdown, randomize button, drag & drop, preview
 js/random_booru.js      frontend: 🎲/↧ buttons, preview, info line, last_post_id persistence
 js/random_prompts52.js  frontend: 🎲/↧ buttons, per-generator widget show/hide, prompt display
+js/minimax_h3.js        frontend: Generate/Regenerate button, stale-input hint, mode-dependent fields
 __init__.py             registration of all node families, each import isolated (see CONTRIBUTING.md)
 example_workflows/     one ready-to-load graph per node (listed by ComfyUI under Templates)
 tests/                  unit tests (_pack.py imports pack submodules without torch)

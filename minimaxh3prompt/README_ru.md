@@ -1,0 +1,156 @@
+# h3kit — промпты MiniMax H3 руками слабой локальной LLM
+
+Главная оптимизация: всё, что можно посчитать, считает Python, а не модель. LLM пишет только саму сцену.
+
+| Кто делает | Что |
+|---|---|
+| Python, до LLM | выбор варианта, план шотов и точные таймкоды склеек, строка привязки картинок (I2VA/FL2VA/L2VA), подсказки куда ставить каждый триггер, готовые блоки диалогов `<d>[Russian] …</d>` с языком, распределение реплик по шотам, проверка «не слишком ли много слов» |
+| LLM | кадр, действие, одна фраза камеры, финал шота, звук, музыка |
+| Python, после LLM | автопочинка (вырезать `<think>`, markdown, болтовню; нормализовать таймкоды; убрать префиксы и повторы триггеров, кавычки вокруг них, `moderate speed`, `slowly`, точку после `</d>`), валидатор, повтор с конкретным списком ошибок |
+
+Системные промпты стали на ~45% короче первой версии (900–1100 слов против 1830), и модели больше не нужно считать время.
+
+## Какой вариант когда
+
+| Задача | Вариант | Как включается |
+|---|---|---|
+| Обычная сцена из текста | `t2va` | по умолчанию |
+| Оживить картинку (первый кадр) | `i2va` | `--mode I2VA` (+ `--image "что на картинке"`) |
+| От картинки А к картинке Б / прийти к последнему кадру | `fl2va` | `--mode FL2VA` / `--mode L2VA` (+ `--start`, `--end`) |
+| Говорящая голова, UGC, интервью, влог | `talking` | есть `--dialogue` |
+| Предметка, реклама товара | `product` | в запросе «реклама/товар/продукт/флакон/product/ad» или `--variant product` |
+| Ролик длиннее 15 с | `story` | `--duration` > 15: планировщик бьёт на клипы по ~10 с, потом `t2va` на каждый с общим описанием героев и стыковкой «конец клипа N = начало N+1» |
+| Референсы: персонаж/сцена/стиль с картинок, движение или камера с видео, голос/музыка с аудио, монтаж или продолжение видео | `ref` (Ref2VA) | любой `--ref` (см. ниже) |
+| Совсем маленькая модель (1–4B) или нужна 100% валидная структура | `slots` | `--variant slots`: модель заполняет JSON-форму (ollama `format` = JSON schema, т.е. ограниченное декодирование), фразы H3 собирает Python |
+
+Выбор автоматический (`--variant auto`), можно задать явно.
+
+Рекомендации по моделям (см. `TESTS.md`):
+- Qwen 3.6 / Qwen 3.8 и аналоги 14–35B: все варианты, `--think` выключен, `temperature 0.3`. На тестах 27B отвечала за 200–400 токенов и проходила валидатор с первого раза.
+- 7–9B: те же варианты, но ставьте `--retries 2`; если часто ошибается — `slots`.
+- 1–4B: только `slots`.
+- Thinking-модели, которые игнорируют `think=false` (qwen3-vl): `--num-predict 9000`, `<think>` вырезается автоматически.
+
+## Запуск
+
+```bash
+# сгенерировать (ollama на localhost)
+python3 h3kit.py run --model qwen3.6:35b-a3b \
+  --request "девушка в кафе смотрит в окно на дождь, потом улыбается" \
+  --duration 8 --aspect 16:9 --triggers "style:kodak_portra, subject:ohwx_girl"
+
+# оживить картинку
+python3 h3kit.py run --model qwen3.6:35b-a3b --mode I2VA \
+  --image "ginger cat on a white windowsill" --request "кот зевает и смотрит в окно" --duration 5
+
+# говорящая голова, две реплики (разделитель ' | ', второй спикер — префикс S2:)
+python3 h3kit.py run --model qwen3.6:35b-a3b --duration 8 --aspect 9:16 \
+  --request "блогер в машине рассказывает про автопилот" \
+  --dialogue "Я не трогаю руль уже двадцать минут. | S2: Серьёзно?"
+
+# реклама с текстом на экране
+python3 h3kit.py run --model qwen3.6:35b-a3b --variant product --duration 10 \
+  --request "наушники в кейсе, кейс открывается" --text "Silence, redesigned"
+
+# длинный ролик → несколько промптов по клипам
+python3 h3kit.py run --model qwen3.6:35b-a3b --duration 30 --request "..."
+
+# крошечная модель
+python3 h3kit.py run --model qwen3:1.7b --variant slots --request "..." --duration 10
+
+# без запуска LLM: показать, что уйдёт в модель (для своих пайплайнов / n8n / ComfyUI)
+python3 h3kit.py build --request "..." --duration 10 --triggers "..."
+python3 h3kit.py export          # готовые системные промпты в prompts/built/*.md
+
+# проверить/починить промпт, написанный где угодно
+python3 h3kit.py validate prompt.txt --fix --duration 10 --triggers "..."
+```
+
+Запрос можно передать JSON-файлом: `--req request.json` с полями `request, duration, aspect, mode, triggers, dialogue, text, image, start, end, variant, shots, refs`.
+
+Как модуль:
+```python
+import h3kit
+req = h3kit.make_request(request="...", duration=10, triggers="subject:sks_man")
+res = h3kit.generate(req, model="qwen3.6:35b-a3b")   # {'variant', 'prompt', 'errors'}
+```
+
+## Reference to Video (Ref2VA)
+
+Формат H3 для референсов — шесть секций: `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, `overall_soundscape`, `non_diegetic_music`, с метками `<Subject N>`, `<Picture N>`, `<Video N>`, `<Audio N>` и маркерами сохранения (`fully_preserved`, `partially_preserved`, `weak_reference`, `fully_copy`, `partially_copy`, `reference`). Для слабой модели это слишком сложно, поэтому:
+
+- **Python пишет сам** `subject_definitions` (нумерация меток по типам файлов), префикс `summary` с типом задачи (`[keyframe completion + reference generation + audio reference]`), `retention_analysis` (в каких шотах встречается каждая метка — считается по готовому тексту), а при `music_copy`/`sound_copy` — поля звука.
+- **Модель пишет** только текст summary, `detailed_description` (стилевая фраза + шоты) и звук.
+- Автопочинка приводит `Subject 1` / `<subject 1>` к `<Subject 1>`, ставит правильный префикс summary, таймкоды, убирает лишние модификаторы. Валидатор проверяет: нет неизвестных меток, каждая `<Subject N>` есть в описании, первый кадр в Shot 1, последний — в последнем шоте, говорящий записан как `<Subject 2> (S1)` и т.д.
+
+Каждый референс — `--ref "тип|роль|описание[|S1]"`, порядок важен (по нему нумеруются `<Picture N>` / `<Video N>` / `<Audio N>`, как файлы, которые вы передаёте в H3).
+
+| Тип | Роль | Что значит |
+|---|---|---|
+| image | `subject` | персонаж/предмет с картинки (4-е поле `S1`, если он говорит) |
+| image | `scene` | окружение, локация |
+| image | `style` | визуальный стиль |
+| image | `prop` | реквизит |
+| image | `first_frame` / `last_frame` | точный первый / последний кадр |
+| video | `subject` | персонаж/предмет из видео |
+| video | `motion` | движение/хореография из видео |
+| video | `camera` | только движение камеры, монтаж, темп |
+| video | `edit` | монтаж исходного видео (что поменять — в `--request`) |
+| video | `continue` | продолжение видео с его последнего кадра |
+| audio | `voice` | тембр голоса для спикера (4-е поле `S1`) |
+| audio | `music_copy` | взять музыку как есть |
+| audio | `music_ref` | музыка «в стиле» |
+| audio | `sound_copy` | взять всю звуковую дорожку 1:1 |
+
+Лимиты H3 (проверяются): до 9 картинок, 3 видео, 3 аудио, всего 12; только аудио нельзя; до 15 с.
+
+```bash
+python3 h3kit.py run --model qwen3.6:35b-a3b --duration 10 --aspect 9:16 \
+  --request "робот-доставщик подъезжает к девушке у подъезда, она забирает пакет и говорит спасибо" \
+  --ref "image|subject|small white six-wheeled delivery robot with a blue lid light" \
+  --ref "image|subject|young woman with short red hair and a green parka|S1" \
+  --ref "image|first_frame|the robot rolling along a wet sidewalk toward a building entrance" \
+  --ref "audio|voice|bright cheerful female voice|S1" \
+  --dialogue "Спасибо, малыш!" --triggers "object:avr_bot"
+```
+
+## Формат входа
+
+| Поле | Пример | Примечание |
+|---|---|---|
+| `request` | «курьер-робот едет по ночной улице» | любой язык |
+| `duration` | 4–15 (до 120+ для `story`) | |
+| `aspect` | 16:9, 9:16, 1:1, 4:3, 3:4, 21:9 | влияет на подсказки по композиции |
+| `mode` | T2VA / I2VA / FL2VA / L2VA | |
+| `triggers` | `style:retro_vhs, subject:sks_man, object:avr_bot, place:alps_road, neon_city` | без префикса = style |
+| `dialogue` | `Привет! \| S2: И тебе.` | язык тега определяется автоматически, можно явно `[Spanish] Hola` |
+| `text` | `Aqua Nera` | текст на экране, единственное, что идёт в кавычках |
+| `shots` | 1–3 | переопределить число шотов |
+| `refs` | список строк, см. раздел Ref2VA | референсы для Ref2VA (в CLI — `--ref`, можно несколько) |
+
+## Правила, зашитые в промпты и проверку
+
+**Хронометраж** (считается Python): ≤6 с — 1 шот; 7–9 с — склейка на 4 с; 10–12 с — пополам; 13–15 с — три шота по трети; FL2VA/L2VA — 1 шот. Каждый шот ≥3 с, у `[Shot 1]` нет времени, остальные — `[Shot N] At MM:SS.mmm, the camera cuts to`. Неверные таймкоды от модели заменяются на плановые автоматически.
+
+**Камера:** одна фраза на шот из списка (static, push in/pull out, zoom, pan, tilt, truck, pedestal, arc, track, POV, shake, roll) + опционально `with small/large amplitude` и `at slow/fast speed` + цель движения. Две смены направления = два шота.
+
+**Позиция в кадре:** крупность, ракурс, треть кадра / центр, план (foreground / midground / background), куда смотрит герой; для движения — откуда и куда. Финал шота — `By the end of the shot …`.
+
+**Триггеры:** ровно один раз, без кавычек, место по префиксу; повторы и префиксы вычищаются автоматически.
+
+**Диалог:** только переданные реплики, дословно, в `<d>[Язык] …</d>` с ID спикера `(S1)`; ~2,5 слова в секунду максимум (иначе предупреждение).
+
+## Файлы
+
+| Файл | Что |
+|---|---|
+| `h3kit.py` | всё: роутер, планировщик, сборка запроса, автопочинка, валидатор, сборщик `slots`, клиент ollama, CLI |
+| `prompts/_core.md` | общее ядро для t2va / i2va / fl2va / talking / product |
+| `prompts/<вариант>.md` | надстройка + пример под задачу |
+| `prompts/ref.md` | надстройка Ref2VA (ядро автоматически переключается на секции summary / detailed_description) |
+| `prompts/story_planner.md`, `prompts/slots.md` | самостоятельные промпты для `story` и `slots` |
+| `TESTS.md` | результаты прогонов на локальной ollama |
+| `prompts/standalone_v1.md` | первая версия: один большой промпт без Python, для ручной вставки в любой чат |
+| `prompts/built/*.md` | собранные целиком системные промпты (`h3kit.py export`) — если нужен просто текст |
+
+Python 3.8+, без зависимостей.

@@ -56,6 +56,15 @@ try:
 except Exception:
     logger.exception("comfyui-bart-nodes: AnatomyDefectFilter failed to load, skipping it")
 
+try:
+    from .minimaxh3prompt.nodes import MiniMaxH3Prompt
+    from .minimaxh3prompt import routes as minimaxh3prompt_routes  # noqa: F401  registers /minimax_h3
+
+    NODE_CLASS_MAPPINGS["MiniMaxH3Prompt"] = MiniMaxH3Prompt
+    NODE_DISPLAY_NAME_MAPPINGS["MiniMaxH3Prompt"] = "Bart's MiniMax H3 Prompt (Ollama) \U0001f3ac"
+except Exception:
+    logger.exception("comfyui-bart-nodes: MiniMaxH3Prompt failed to load, skipping it")
+
 WEB_DIRECTORY = "./js"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
