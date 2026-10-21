@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-bart-nodes"
-description = "Random/sequential pickers (local directory, booru tag search across five sites, 52prompts.com text prompts), an Ollama-based anatomy defect filter for images, an Ollama-based MiniMax H3 video prompt generator, an image loader with an on-node crop editor, and a YuE2-3B music generation wrapper."
-version = "0.10.3"
+description = "Random/sequential pickers (local directory, booru tag search across five sites, 52prompts.com text prompts), an Ollama-based anatomy defect filter for images, an Ollama-based MiniMax H3 video prompt generator, an image loader with an on-node crop editor, a touch-friendly image picker for the input folder, and a YuE2-3B music generation wrapper."
+version = "0.11.0"
 license = { text = "MIT License" }
 
 [project.urls]

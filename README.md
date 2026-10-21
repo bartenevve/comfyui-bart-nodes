@@ -16,6 +16,7 @@ Two more groups do something different — they *process* or *generate* rather t
 
 | Node | Does | Needs |
 | --- | --- | --- |
+| **Bart's Image Picker (input folder) 🖼️** (`ImagePicker`, category `Bart's nodes/Image`) — [details](#image-picker-input-folder) | picks an image from ComfyUI's input folder through a full-screen thumbnail gallery that works on touch screens | nothing beyond ComfyUI |
 | **Bart's Smart Load Image (Crop) ✂️** (`SmartLoadImage`, category `Bart's nodes/Image`) — [details](#smart-load-image-crop) | loads an image and lets you crop it right on the node; only the selected part is output | nothing beyond ComfyUI |
 | **Bart's Anatomy Defect Filter (Ollama) 🔍** (`AnatomyDefectFilter`, category `Bart's nodes/Image`) — [details](#anatomy-defect-filter-ollama-) | splits images into `passed` / `failed` by asking an Ollama vision model about anatomy defects (extra limbs, wrong finger count, ...) | an Ollama server with a chat-capable vision model |
 | **Bart's MiniMax H3 Prompt (Ollama) 🎬** (`MiniMaxH3Prompt`, category `Bart's nodes/Text`) — [details](#minimax-h3-prompt-ollama-) | writes ready-to-use prompts for the MiniMax H3 video model with a local Ollama LLM, from a short request (any language); a Generate button fills the result without running the graph | an Ollama server + a chat model (non-thinking instruct models work best) |
@@ -64,6 +65,28 @@ The node's preview shows what **actually** got loaded on the last run (survives 
 **Outputs:** `IMAGE`, `MASK`, `filename` (the file that was actually loaded this run), `directory` (the resolved absolute directory path this run used).
 
 ---
+
+## Image Picker (input folder)
+
+A Load Image replacement for **phones and tablets**. On a touch screen the stock file dropdown opens on the finger-down and closes again on the finger-up, leaving only the ◀ ▶ arrows to step through files. This node opens a **full-screen gallery** instead.
+
+| Part | What it does |
+| --- | --- |
+| **🖼 Choose image** (or tap the preview) | Opens the gallery. The button is an ordinary page button, not a canvas widget, and the gallery ignores taps in its first 350 ms, so the opening gesture can't select or dismiss anything. |
+| the gallery | Thumbnails **with file names**, folders first. Scroll with the browser's own touch scrolling (momentum included; a scroll never counts as a tap). **Tap an image** to select it and close. Large 44 px controls, 16 px inputs (no iOS zoom on focus). |
+| breadcrumbs | `🏠 input › folder › subfolder`: tap a segment to jump up. Tap a 📁 to go into a subfolder (the stock node can't leave the top level). |
+| search / sort | Filter by name; sort by name A→Z / Z→A (numbers sort naturally: `img2` before `img10`), newest or oldest first. |
+| size | **S / M / L** buttons and a slider (90-400 px cells). Size and sort are remembered in the browser. |
+| ◀ / ▶ | Step to the previous / next file in the same folder, wrapping at the ends. |
+| **＋ Upload** | In the gallery (into the folder you are looking at) and on the node: pick files, or drop an image on the node. One uploaded file is selected right away. |
+
+**Outputs:** `IMAGE`, `MASK` (from the alpha channel, like Load Image), `filename` (the path inside the input folder, e.g. `trip/IMG_0042.jpg`), `width`, `height`. Animated files (GIF/WebP) give all frames as a batch. EXIF rotation is applied.
+
+How it works: the node stores the path in a hidden text widget (a normal dropdown would have to list every file and subfolder up front, and ComfyUI rejects values that aren't in it). The gallery gets its data from two routes under `/image_picker/`: `list` (one folder level: subfolders and image files with size and date) and `thumb` (a WebP thumbnail in one of five size buckets, 128-512 px, cached in ComfyUI's temp folder and keyed by path + modification time, so an edited file gets a fresh thumbnail). Big photos are decoded at reduced size; a file that can't be read shows a ⚠️ cell. A folder listing is capped at 5000 files (the gallery says so; use search or subfolders).
+
+Notes:
+- Only the **input folder** (and its subfolders) is reachable. The routes refuse `..`, absolute paths and drive letters, and serve only image files. A symlinked collection placed *inside* the input folder works (as with the stock `/view`); the check is by path, not by where a symlink ends up.
+- Verified on a 375×812 touch-emulated viewport (layout, scrolling, tap-to-select, the early-tap guard, search, sort, sizes, 300-file folder with chunked rendering, stepping, upload into a subfolder, running the node). **Not** verified on a physical phone or tablet: the emulator sends mouse-style clicks, so the real finger-up behaviour that breaks the stock dropdown was reasoned about and guarded against, not reproduced.
 
 ## Smart Load Image (Crop)
 
@@ -338,8 +361,9 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 | `08_yue2_cover_from_abc.json` | YuE2 cover mode: an externally obtained ABC transcription + `cot=melody` |
 | `09_minimax_h3_prompt.json` | MiniMax H3 prompt: request in, Generate button, prompt + report previews |
 | `10_smart_load_image.json` | Smart Load Image: crop on the node, cropped preview + width / height |
+| `11_image_picker.json` | Image Picker: touch-friendly gallery picker, preview + width / height |
 
-01–05, 09 and 10 were loaded back into a real ComfyUI frontend and run from its Run button; 06–08 load fine but need the `yue2` package and a big GPU to execute (see the YuE2 section).
+01–05 and 09–11 were loaded back into a real ComfyUI frontend and run from its Run button; 06–08 load fine but need the `yue2` package and a big GPU to execute (see the YuE2 section).
 
 ---
 
@@ -359,7 +383,7 @@ The wrapper was checked against the `yue2` 0.1.5 source and run through the real
 
 ## Tests
 
-The pure logic — file selection, booru position selection, the booru backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, the MiniMax H3 wrapper (against a faked Ollama), the crop box clamping and - under `node`, when installed - the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (290+, no torch, ComfyUI or network needed):
+The pure logic — file selection, booru position selection, the booru backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the JavaScript interpreter behind the 52prompts node (against inline fixtures, no network), the YuE2 helper logic, the MiniMax H3 wrapper (against a faked Ollama), the Image Picker's path safety / folder listing / thumbnail naming, the crop box clamping and - under `node`, when installed - the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server) — is covered by unit tests (310+, no torch, ComfyUI or network needed):
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -395,6 +419,10 @@ prompts52/
   fetch.py              urllib GET, per-host throttle, in-memory TTL cache
   nodes.py              LoadRandom52Prompt
   routes.py             /random_prompts52/pick, /generators
+imagepicker/
+  selection.py          pure logic: safe subfolder/filename cleaning, folder listing, thumbnail size buckets + cache names
+  nodes.py              ImagePicker: path -> IMAGE/MASK/filename/width/height (EXIF, animated frames)
+  routes.py             /image_picker/list, /image_picker/thumb (cached WebP thumbnails)
 smartload/
   selection.py          pure logic: clamp_box() (crop inside the image), aspect-lock / snap choices
   nodes.py              SmartLoadImage: input-folder file, EXIF transpose, crop per frame, IMAGE/MASK/width/height
@@ -415,6 +443,8 @@ yue2/
 js/random_image.js      frontend: file dropdown, randomize button, drag & drop, preview
 js/random_booru.js      frontend: 🎲/↧ buttons, preview, info line, last_post_id persistence
 js/random_prompts52.js  frontend: 🎲/↧ buttons, per-generator widget show/hide, prompt display
+js/bart_image_gallery.js frontend: the shared full-screen touch gallery (no extension of its own)
+js/image_picker.js      frontend: Image Picker node UI (preview, Choose / ◀ ▶ / Upload buttons)
 js/smart_load_image.js  frontend: crop editor (draw/move/resize, aspect lock, snap grid), upload + drag & drop
 js/minimax_h3.js        frontend: Generate/Regenerate button, stale-input hint, mode-dependent fields
 __init__.py             registration of all node families, each import isolated (see CONTRIBUTING.md)

@@ -73,6 +73,15 @@ try:
 except Exception:
     logger.exception("comfyui-bart-nodes: SmartLoadImage failed to load, skipping it")
 
+try:
+    from .imagepicker.nodes import ImagePicker
+    from .imagepicker import routes as imagepicker_routes  # noqa: F401  registers /image_picker
+
+    NODE_CLASS_MAPPINGS["ImagePicker"] = ImagePicker
+    NODE_DISPLAY_NAME_MAPPINGS["ImagePicker"] = "Bart's Image Picker (input folder) \U0001f5bc\ufe0f"
+except Exception:
+    logger.exception("comfyui-bart-nodes: ImagePicker failed to load, skipping it")
+
 WEB_DIRECTORY = "./js"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
