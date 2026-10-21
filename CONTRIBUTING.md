@@ -80,9 +80,46 @@ If your dependencies are unusually heavy or non-standard (not on PyPI, needs a s
 
 Add `tests/test_<subpkg>_*.py` that import the sub-package's pure-logic modules directly (bypassing the root `__init__.py`, same trick `tests/test_selection.py` uses via `sys.path.insert`), so `python3 -m unittest discover -s tests` keeps working without a real ComfyUI/torch environment. Cover at minimum: input validation edge cases for every route parameter, and — if the node has any sequential/auto-advance mode — the same batch-queue race scenario the root `LoadRandomImage` had to be fixed for (see [Stateful/sequential behavior](#statefulsequential-behavior-race-safety)).
 
-### `pyproject.toml` / `README.md`
+### `pyproject.toml`, version, examples and `README.md`
 
-Bump `version`, extend `description` to mention the new node, and add a README section for it (see the existing `## Load Random Booru Image` / `## Load Random Prompt (52prompts)` sections as the template — usage, any source-specific caveats, security notes if it talks to a third-party service).
+Every change to the pack bumps `version` in `pyproject.toml` (the registry refuses a version it already has; a new node is a minor bump, a fix a patch). A new node also needs:
+
+- a mention in `description`;
+- an example workflow `example_workflows/NN_<name>.json` (build it in a real ComfyUI, save it, and load it back before committing) **and** a place in `12_all_nodes.json`, the graph that holds every node in groups;
+- a README section, written from the template below, plus a row in "Nodes at a glance", the example table, the Security table and the Files tree.
+
+#### README section template
+
+Every node section looks the same, so a reader can find the same thing in the same place. Headings carry no emoji (they make the anchors fragile); the display name with its emoji lives in the overview table.
+
+```markdown
+## <Display name without the "Bart's" prefix>
+
+<One sentence: what it does and for whom. Bold the one thing that sets it apart.>
+
+| | |
+| --- | --- |
+| **Class · category** | `ClassName` · `Bart's nodes/<Image|Text|Audio>` |
+| **Example workflow** | [`NN_name.json`](example_workflows/NN_name.json) |
+| **Needs** | what must be installed or running (or "nothing beyond ComfyUI") |
+| **Network** | outbound requests, to whom, how throttled (or "none") |
+| **HTTP routes** | routes this node adds and what they accept (or "none") |
+| **Verified** | what was actually run, and what was **not** |
+
+### Widgets
+| Widget | Meaning |      <- buttons and the preview are rows here too
+
+### Outputs
+| Output | Type | Meaning |      <- new outputs are appended, never inserted (links are saved by slot index)
+
+### How it works
+<the mechanism that is not obvious from the widget table: state, caching, protocols, limits of a backend>
+
+### Notes and limits
+- <known limits, gotchas, and anything that can surprise the user>
+```
+
+Keep the claims in **Verified** honest: say "not verified on a physical phone" rather than leaving the gap implicit.
 
 ## Stateful/sequential behavior: race safety
 
