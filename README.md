@@ -1,6 +1,6 @@
 # comfyui-bart-nodes
 
-Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch-friendly gallery, a crop editor, booru boards), a few text and audio **generators**, and an Ollama-based **image filter**. Every node is named `Bart's ...` (search for "bart" to list them all) and sits under the **Bart's nodes** category, split into `Image`, `Text` and `Audio`.
+Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch-friendly gallery, a crop editor, booru boards), a few text and audio **generators**, and an Ollama-based **image filter**. Every node is named `Bart's ...` (search for "bart" to list them all) and sits under the **Bart's nodes** category, split into `Image`, `Text`, `Latent` and `Audio`.
 
 ## Nodes at a glance
 
@@ -13,6 +13,7 @@ Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch
 | [**Bart's Anatomy Defect Filter (Ollama) 🔍**](#anatomy-defect-filter) | `Image` | splits images into `passed` / `failed` by asking an Ollama **vision model** about anatomy defects | an Ollama server with a vision chat model |
 | [**Bart's Load Random Prompt (52prompts) 🎲**](#load-random-prompt-52prompts) | `Text` | outputs a random text prompt from one of 20 generators on [52prompts.com](https://52prompts.com/) | internet access |
 | [**Bart's MiniMax H3 Prompt (Ollama) 🎬**](#minimax-h3-prompt) | `Text` | writes ready-to-use **MiniMax H3 video prompts** with a local LLM; a Generate button fills the result without running the graph | an Ollama server + a chat model |
+| [**Bart's WAN Latent Trim Start 🎞️**](#wan-latent-trim-start) | `Latent` | cuts frames off the **start** of a WAN video latent **before the VAE decode**; the count is in pixel frames | nothing beyond ComfyUI |
 | [**Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵**](#yue2-music-generation) | `Audio` | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score in between | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon slowly) |
 
 Every section below follows the same layout: a facts table, **Widgets**, **Outputs**, **How it works**, **Notes and limits**. The pack-wide parts are at the end: [Example workflows](#example-workflows), [Security](#security), [Tests](#tests), [Files](#files), [Known limitations](#known-limitations).
@@ -424,6 +425,53 @@ The list outputs make a video node fed by `prompt` + `duration` run once per cli
 
 ---
 
+## WAN Latent Trim Start
+
+Cuts frames off the **start** of a WAN video latent **before the VAE decode**, with the count in **pixel frames** (the unit you see in the finished video).
+
+| | |
+| --- | --- |
+| **Class · category** | `WanLatentTrim` · `Bart's nodes/Latent` |
+| **Example workflows** | [`13_wan_latent_trim.json`](example_workflows/13_wan_latent_trim.json) (needs no model), group 5 of [`12_all_nodes.json`](example_workflows/12_all_nodes.json) |
+| **Needs** | nothing beyond ComfyUI |
+| **Network** | none |
+| **HTTP routes** | none |
+| **Verified** | output compared with ComfyUI's own **Trim Video Latent** on a 21-frame latent: bit-identical for 0, 4, 8, 12, 40 and 80 px frames; run in a real ComfyUI (API and frontend) on an empty 81-frame latent, including the snapping and the error case; the frame formula checked against the WAN VAE's `upscale_ratio` in ComfyUI's source. **Not** run on a real WAN sampler output through a real VAE decode. |
+
+Ported from the standalone `comfyui-wan-latent-trim` project, with a few changes: logging instead of `print`, the two extra outputs, and tests.
+
+### Widgets
+
+| Widget | Meaning |
+| --- | --- |
+| `samples` (input) | A 5-dimensional video latent `[B, C, T, H, W]`, for example the output of a WAN sampler. |
+| `trim_start_frames` | Pixel frames to remove from the start (0-16384). Converted to latent frames as `round(N / 4)`, halves rounding up; multiples of 4 are exact. 0 passes the latent through unchanged. |
+
+### Outputs
+
+| Output | Type | Meaning |
+| --- | --- | --- |
+| `samples` | `LATENT` | The trimmed latent. The input is not modified. |
+| `removed_frames` | `INT` | Pixel frames that were **really** removed (a request that isn't a multiple of 4 is snapped). |
+| `frames_left` | `INT` | Pixel frames the trimmed latent will decode to. |
+
+### How it works
+
+WAN's VAE compresses time 4× with a causal first frame, so `T` latent frames decode to `4T − 3` pixel frames (`F = (T − 1) · 4 + 1`; ComfyUI's own WAN `upscale_ratio` is `a * 4 - 3`). Dropping `L` latent frames from the front therefore drops exactly `4 · L` pixel frames: the `+1` keyframe cancels between the old and the new total. That is why the pixel count converts cleanly, and why the cut can only land on a multiple of 4. Put the node **between the sampler and VAE Decode**; it saves decoding frames you would throw away.
+
+ComfyUI's own **Trim Video Latent** does the same slice, but its `trim_amount` is in *latent* frames and it neither reports what it did nor refuses a cut that leaves nothing. This node adds the pixel-frame unit, the two reporting outputs, clear errors, and trims a per-frame `noise_mask` along with the samples.
+
+### Notes and limits
+
+- **WAN-style 4× latents only.** The conversion assumes 4× temporal compression. LTX-Video (8×, `8T − 7`) and Mochi (6×, `6T − 5`) latents are 5-dimensional too and would be accepted, but the pixel count would be wrong; use ComfyUI's `LatentCut` (`dim = t`) in latent frames for those.
+- A 4-dimensional (image) latent is refused with a message; asking to remove all frames or more is refused too (`nothing would remain`).
+- Only a 5-dimensional `noise_mask` whose time axis matches the samples is trimmed; the usual 4-dimensional mask is left as it is.
+- The start only. To cut the end, use `LatentCut` with `dim = t`.
+- Reasoned, not measured: a causal VAE decodes the new first latent frame as a single frame, so the frames right after the cut can differ slightly from decoding the whole clip and cutting the pixels.
+- The same class id as the standalone `comfyui-wan-latent-trim` project: don't install both (one overrides the other); workflows made with the standalone node load here unchanged.
+
+---
+
 ## YuE2 Music Generation
 
 Wraps [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B): style + lyrics in, a **full stereo song** out. Three nodes: a loader, a planner and a generator, with an editable ABC score between planning and rendering.
@@ -494,16 +542,18 @@ yue2 has no separate cover/edit entry points: both are a `pipeline(...)` call wi
 | [`09_minimax_h3_prompt.json`](example_workflows/09_minimax_h3_prompt.json) | MiniMax H3 Prompt: request in, Generate button, prompt / report / duration / size previews |
 | [`10_smart_load_image.json`](example_workflows/10_smart_load_image.json) | Smart Load Image: crop on the node, cropped preview + width / height |
 | [`11_image_picker.json`](example_workflows/11_image_picker.json) | Image Picker: touch-friendly gallery, preview + width / height |
-| [`12_all_nodes.json`](example_workflows/12_all_nodes.json) | **All nodes in one graph**, in four groups (below) |
+| [`12_all_nodes.json`](example_workflows/12_all_nodes.json) | **All nodes in one graph**, in five groups (below) |
+| [`13_wan_latent_trim.json`](example_workflows/13_wan_latent_trim.json) | WAN Latent Trim Start on an empty latent: no model needed, shows `removed_frames` / `frames_left` |
 
-**`12_all_nodes.json`** has four groups; they don't depend on each other, so mute or bypass the ones you don't need (select the group's nodes, `Ctrl+M` to mute, `Ctrl+B` to bypass):
+**`12_all_nodes.json`** has five groups; they don't depend on each other, so mute or bypass the ones you don't need (select the group's nodes, `Ctrl+M` to mute, `Ctrl+B` to bypass):
 
 1. **Pick images** — Load Random Image (muted until you set `directory`), Image Picker, Smart Load Image, Load Random Booru Image (Safebooru, `landscape`), each into a preview.
 2. **Check anatomy** — Smart Load Image's cropped image → Anatomy Defect Filter → `passed` preview, `failed` saved to `output/rejected/`, report. Needs an Ollama vision model.
 3. **Write a video prompt** — Load Random Prompt (52prompts) → the `request` of MiniMax H3 Prompt (a linked widget) → prompt, duration and size previews. Needs an Ollama chat model.
 4. **Make music** — YuE2 Model Loader → Plan Score → Generate Song → Save Audio. **Bypassed by default**: it needs the `yue2` package and a big GPU. Un-bypass it (`Ctrl+B` again) once that is set up.
+5. **Trim a video latent** — an empty 81-frame latent → WAN Latent Trim Start (10 px frames asked, 12 removed) → `removed_frames` and `frames_left` previews. Needs no model.
 
-The examples were loaded back into a real ComfyUI frontend (01-05 and 09-12) and run from its Run button; 06-08 load fine but need the `yue2` package and a big GPU to execute.
+The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and run from its Run button; 06-08 load fine but need the `yue2` package and a big GPU to execute.
 
 ---
 
@@ -518,6 +568,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-12) and
 | Anatomy Defect Filter | `ollama_url` | none | your images go to that server |
 | Load Random Prompt (52prompts) | 52prompts.com + CDN | `/random_prompts52/*` | the site sees your IP |
 | MiniMax H3 Prompt | `ollama_url` | `POST /minimax_h3/generate` | the route takes `ollama_url` from the caller |
+| WAN Latent Trim Start | none | none | — |
 | YuE2 nodes | Hugging Face (weights, once) | none | — |
 
 **Directory node (Load Random Image).** The `/random_image/list`, `/pick` and `/view` routes accept a `dir` parameter with **no restriction whatsoever**: anyone who can reach ComfyUI's HTTP port (not necessarily through the graph or UI at all; a bare GET is enough) can list and read arbitrary files the ComfyUI process can access. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug an allowlist should close.
@@ -536,7 +587,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-12) and
 
 ## Tests
 
-The pure logic is covered by unit tests (310+, no torch, ComfyUI or network needed): file selection, booru position selection and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the 52prompts JavaScript interpreter (against inline fixtures), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama), the Image Picker's path safety / folder listing / thumbnail naming, the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server).
+The pure logic is covered by unit tests (310+, no torch, ComfyUI or network needed): file selection, booru position selection and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), the 52prompts JavaScript interpreter (against inline fixtures), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama), the Image Picker's path safety / folder listing / thumbnail naming, the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server).
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -588,6 +639,9 @@ minimaxh3prompt/         MiniMax H3 Prompt
   selection.py           pure logic: widget coercion/ranges, URL check, clip join/split, frame size, report text
   runner.py              kit call with options + error mapping (HTTP/timeout/unreachable -> H3Error)
   nodes.py, routes.py    the node (saved-text-wins logic, outputs); POST /minimax_h3/generate
+latenttrim/              WAN Latent Trim Start
+  selection.py           pure frame math: pixel_frames(), latent_frames_to_trim(), plan_trim()
+  nodes.py               the node (torch): slice samples and a per-frame mask, report what went
 yue2/                    YuE2 nodes
   selection.py           pure logic: VAE choices, generate() kwargs, token budgets
   nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
@@ -611,6 +665,7 @@ CONTRIBUTING.md          how to add a node sub-package, and the documentation te
 - The booru node can only address a limited number of positions per source (see its section), and those positions shift as new posts are uploaded.
 - The 52prompts node depends on the shape of the site's generator scripts; a rewrite outside the supported JavaScript subset needs `prompts52/jsmini.py` extended (it fails loudly).
 - The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed.
+- WAN Latent Trim Start has been checked against ComfyUI's own node and on empty latents, not on a real WAN generation (see its **Verified** row).
 - The anatomy filter's judgement quality depends entirely on the vision model you pick; it has been exercised on a few synthetic images only. Calibrate on your own.
 - Image Picker has not been tried on a physical touch device (see its **Verified** row).
 - MiniMax H3 Prompt: Interrupt doesn't cancel a request already waiting on Ollama; its outputs have not been wired into the real MiniMax video nodes.

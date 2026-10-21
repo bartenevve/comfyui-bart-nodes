@@ -82,6 +82,14 @@ try:
 except Exception:
     logger.exception("comfyui-bart-nodes: ImagePicker failed to load, skipping it")
 
+try:
+    from .latenttrim.nodes import WanLatentTrim
+
+    NODE_CLASS_MAPPINGS["WanLatentTrim"] = WanLatentTrim
+    NODE_DISPLAY_NAME_MAPPINGS["WanLatentTrim"] = "Bart's WAN Latent Trim Start \U0001f39e\ufe0f"
+except Exception:
+    logger.exception("comfyui-bart-nodes: WanLatentTrim failed to load, skipping it")
+
 WEB_DIRECTORY = "./js"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

@@ -33,7 +33,7 @@ Nothing in this file should `import torch`, `import aiohttp`, or anything else h
 Match the conventions already established by the root `nodes.py`:
 
 - `INPUT_TYPES()` classmethod; put anything that needs per-node identity (a sequential "advance to next" pointer, a running total, etc.) behind a `hidden: {"unique_id": "UNIQUE_ID"}` entry — see [Stateful/sequential behavior](#statefulsequential-behavior-race-safety) below.
-- `RETURN_TYPES` / `RETURN_NAMES` / `FUNCTION` / `CATEGORY`. Category is `Bart's nodes/<Image|Text|Audio>` and the display name starts with `Bart's `, so every node of the pack is found by searching "bart" and sits in one menu folder.
+- `RETURN_TYPES` / `RETURN_NAMES` / `FUNCTION` / `CATEGORY`. Category is `Bart's nodes/<Image|Text|Latent|Audio>` and the display name starts with `Bart's `, so every node of the pack is found by searching "bart" and sits in one menu folder.
 - `IS_CHANGED` — if the node has any "changes every run" mode (random pick, auto-advance), return `float("nan")` for that mode so ComfyUI never caches a stale result; otherwise hash the actual inputs that determine output identity (see the "why hash `directory` too" note in the root `nodes.py`'s history — hashing only `filename` and not `directory` was a real bug there).
 - `VALIDATE_INPUTS` — reject invalid input *combinations* here (e.g. two mutually-exclusive checkboxes both true), not just per-field checks. This runs server-side regardless of how the prompt was submitted (UI, a hand-edited workflow.json, or a raw API POST), so it's the actual enforcement point — don't rely on frontend JS alone for anything that must never reach execution.
 
@@ -99,7 +99,7 @@ Every node section looks the same, so a reader can find the same thing in the sa
 
 | | |
 | --- | --- |
-| **Class · category** | `ClassName` · `Bart's nodes/<Image|Text|Audio>` |
+| **Class · category** | `ClassName` · `Bart's nodes/<Image|Text|Latent|Audio>` |
 | **Example workflow** | [`NN_name.json`](example_workflows/NN_name.json) |
 | **Needs** | what must be installed or running (or "nothing beyond ComfyUI") |
 | **Network** | outbound requests, to whom, how throttled (or "none") |
