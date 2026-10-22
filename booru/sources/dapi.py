@@ -106,7 +106,7 @@ class DapiSource(BooruSource):
     def _get_text(self, **query):
         params = {"page": "dapi", "s": "post", "q": "index", **query}
         url = f"{self.origin}index.php?{urllib.parse.urlencode(params)}"
-        return fetch.get_text(url, referer=self.origin)
+        return fetch.get_text(url, referer=self.origin, domain=self.domain)
 
     def count(self, tags):
         key = (self.name, tags)
@@ -145,7 +145,7 @@ class DapiSource(BooruSource):
     def download(self, url):
         if not url_on_domain(url, self.domain):
             raise LookupError(f"refusing to download from a non-{self.domain} host: {url}")
-        return fetch.cached_download(url, referer=self.origin)
+        return fetch.cached_download(url, referer=self.origin, domain=self.domain)
 
 
 class Safebooru(DapiSource):

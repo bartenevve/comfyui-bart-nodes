@@ -136,7 +136,17 @@ class TestCounting(unittest.TestCase):
         self.assertEqual(source._count_uncached("cat"), 2)
 
     def test_no_results_is_zero(self):
-        self.assertEqual(FakeSource({0: "<html></html>"})._count_uncached("cat"), 0)
+        page = "<html><body><h1>Nobody here but us chickens!</h1></body></html>"
+        self.assertEqual(FakeSource({0: page})._count_uncached("cat"), 0)
+
+    def test_an_unrecognised_page_is_an_error_not_zero_posts(self):
+        # a block page / maintenance page / changed layout has no thumbnails either, but
+        # "no posts for these tags" would be wrong (and cached for a minute)
+        for page in ("<html></html>", "<title>Just a moment...</title>", ""):
+            with self.subTest(page=page):
+                with self.assertRaises(LookupError) as caught:
+                    FakeSource({0: page})._count_uncached("cat")
+                self.assertIn("unexpected page", str(caught.exception))
 
     def test_count_is_last_pid_plus_last_page_length(self):
         source = FakeSource({0: LISTING, 126: thumbnail("9", "cat") + thumbnail("8", "cat")})

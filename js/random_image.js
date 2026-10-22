@@ -44,6 +44,18 @@ app.registerExtension({
             // separately from `filename` which tracks the NEXT pick
             lastLoadedWidget.computeSize = () => [0, -4];
 
+            // edit_serial tells the server "the user picked this file by hand" (a fresh value
+            // per pick), so that re-picking the very file the previous run started with isn't
+            // mistaken for a queued duplicate of that run. Hidden and persisted like last_loaded;
+            // absent on a build of the node without it, in which case there is nothing to signal.
+            const editSerialWidget = node.widgets.find((w) => w.name === "edit_serial");
+            if (editSerialWidget) editSerialWidget.computeSize = () => [0, -4];
+            function markHandPicked() {
+                if (editSerialWidget) {
+                    editSerialWidget.value = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+                }
+            }
+
             // turn the plain STRING widget into a dropdown of files found
             // in `directory`, same idea as core LoadImage's file combo
             filenameWidget.type = "combo";
@@ -155,6 +167,7 @@ app.registerExtension({
 
             const origFilenameCallback = filenameWidget.callback;
             filenameWidget.callback = function (value) {
+                markHandPicked();
                 node.updateRandomImagePreview(value);
                 return origFilenameCallback ? origFilenameCallback.apply(this, arguments) : undefined;
             };
@@ -178,6 +191,7 @@ app.registerExtension({
                         filenameWidget.options.values.push(data.filename);
                     }
                     filenameWidget.value = data.filename;
+                    markHandPicked();
                     node.updateRandomImagePreview(data.filename);
                 } catch (e) {
                     console.error("random_image pick failed:", e);
@@ -214,6 +228,7 @@ app.registerExtension({
                         filenameWidget.options.values.push(data.name);
                     }
                     filenameWidget.value = data.name;
+                    markHandPicked();
                     node.updateRandomImagePreview(data.name);
                 } catch (e) {
                     console.error("random_image upload failed:", e);
@@ -242,17 +257,26 @@ app.registerExtension({
                 return handled;
             };
 
-            updateWidgetVisibility();
-            if (dirWidget.value) {
-                refreshFileList();
-            }
-            // prefer the persisted "what actually loaded last run" value;
-            // fall back to `filename` only for a node that never ran yet
-            if (lastLoadedWidget.value) {
-                node.updateRandomImagePreview(lastLoadedWidget.value);
-            } else if (filenameWidget.value) {
-                node.updateRandomImagePreview(filenameWidget.value);
-            }
+            // Needed twice: here for a fresh node, and from onConfigure for a node loaded from a
+            // workflow - LiteGraph creates it first (this function, widgets still at their
+            // defaults, so no directory to list) and only then applies the saved values.
+            node.restoreRandomImage = function () {
+                // a node (or an old workflow) that has no serial yet gets one now, so the server
+                // treats every later run as "no hand edit since the last run" until the user edits
+                if (editSerialWidget && !editSerialWidget.value) markHandPicked();
+                updateWidgetVisibility();
+                if (dirWidget.value) {
+                    refreshFileList();
+                }
+                // prefer the persisted "what actually loaded last run" value;
+                // fall back to `filename` only for a node that never ran yet
+                if (lastLoadedWidget.value) {
+                    node.updateRandomImagePreview(lastLoadedWidget.value);
+                } else if (filenameWidget.value) {
+                    node.updateRandomImagePreview(filenameWidget.value);
+                }
+            };
+            node.restoreRandomImage();
 
             return result;
         };
@@ -296,7 +320,8 @@ app.registerExtension({
             if (randomW && sequentialW && randomW.value && sequentialW.value) {
                 sequentialW.value = false;
             }
-            if (this.updateWidgetVisibility) this.updateWidgetVisibility();
+            if (this.restoreRandomImage) this.restoreRandomImage();
+            else if (this.updateWidgetVisibility) this.updateWidgetVisibility();
             return result;
         };
     },

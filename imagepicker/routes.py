@@ -1,13 +1,14 @@
 import asyncio
+import errno
 import functools
 import os
 
 import folder_paths
 from aiohttp import web
-from PIL import Image, ImageOps
 from server import PromptServer
 
-from .selection import PathError, clean_subfolder, join_inside, is_image_name, list_directory, thumb_cache_name, thumb_size
+from .selection import PathError, clean_subfolder, is_image_name, join_inside, list_directory, thumb_cache_name, thumb_size
+from .thumbs import make_thumb
 
 
 async def _run(func, *args, **kwargs):
@@ -23,20 +24,6 @@ def _thumb_dir():
     return path
 
 
-def _make_thumb(source, target, size):
-    with Image.open(source) as img:
-        if img.format == "JPEG":
-            img.draft("RGB", (size * 2, size * 2))  # decode at reduced scale: much faster for big photos
-        img = ImageOps.exif_transpose(img)  # first frame only for animations
-        has_alpha = "A" in img.getbands() or (img.mode == "P" and "transparency" in img.info)
-        img = img.convert("RGBA" if has_alpha else "RGB")
-        img.thumbnail((size, size), Image.Resampling.LANCZOS)
-        # write-then-rename so a half-written thumbnail is never served from the cache
-        temporary = f"{target}.{os.getpid()}.part"
-        img.save(temporary, "WEBP", quality=80, method=4)
-    os.replace(temporary, target)
-
-
 @PromptServer.instance.routes.get("/image_picker/list")
 async def list_folder(request):
     try:
@@ -47,7 +34,10 @@ async def list_folder(request):
     except (FileNotFoundError, NotADirectoryError):
         return web.json_response({"error": "folder not found"}, status=404)
     except OSError as exc:
-        return web.json_response({"error": f"cannot read folder: {exc.strerror}"}, status=500)
+        # a name the file system itself refuses (too long, bad characters, a symlink loop) is the
+        # caller's mistake, not a server fault
+        refused = exc.errno in (errno.ENAMETOOLONG, errno.ELOOP, errno.EINVAL)
+        return web.json_response({"error": f"cannot read folder: {exc.strerror}"}, status=400 if refused else 500)
     return web.json_response(result)
 
 
@@ -73,7 +63,7 @@ async def thumbnail(request):
     target = os.path.join(_thumb_dir(), thumb_cache_name(relative, stat.st_mtime_ns, stat.st_size, size))
     if not os.path.isfile(target):
         try:
-            await _run(_make_thumb, source, target, size)
+            await _run(make_thumb, source, target, size)
         except Exception as exc:  # corrupt / unsupported file: the gallery shows a placeholder
             return web.json_response({"error": f"cannot read image: {type(exc).__name__}"}, status=415)
     return web.FileResponse(target, headers={"Cache-Control": "private, max-age=3600"})

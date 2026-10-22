@@ -1,10 +1,9 @@
 import hashlib
 import os
 
-import numpy as np
 import torch
-from PIL import Image, ImageOps, ImageSequence
 
+from .imageload import load_frames
 from .selection import list_images, resolve_filenames
 
 
@@ -20,6 +19,8 @@ class LoadRandomImage:
             "optional": {
                 "filename": ("STRING", {"default": ""}),
                 "last_loaded": ("STRING", {"default": ""}),
+                # written by the frontend whenever the user changes the file by hand (see selection.py)
+                "edit_serial": ("STRING", {"default": ""}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -38,6 +39,7 @@ class LoadRandomImage:
         sequential_on_queue,
         filename="",
         last_loaded="",
+        edit_serial="",
         unique_id=None,
     ):
         directory = os.path.realpath(directory)
@@ -49,37 +51,13 @@ class LoadRandomImage:
             raise FileNotFoundError(f"No images found in directory: {directory}")
 
         chosen, next_filename = resolve_filenames(
-            files, randomize_on_queue, sequential_on_queue, filename, unique_id, directory=directory
+            files, randomize_on_queue, sequential_on_queue, filename, unique_id, directory=directory, edit_serial=edit_serial
         )
         image_path = os.path.join(directory, chosen)
 
-        img = Image.open(image_path)
-
-        output_images = []
-        output_masks = []
-        for frame in ImageSequence.Iterator(img):
-            frame = ImageOps.exif_transpose(frame)
-            if frame.mode == "I":
-                frame = frame.point(lambda i: i * (1 / 255))
-            rgb_image = frame.convert("RGB")
-            arr = np.array(rgb_image).astype(np.float32) / 255.0
-            tensor = torch.from_numpy(arr)[None,]
-
-            if "A" in frame.getbands():
-                mask_arr = np.array(frame.getchannel("A")).astype(np.float32) / 255.0
-                mask = 1.0 - torch.from_numpy(mask_arr)
-            else:
-                mask = torch.zeros((frame.height, frame.width), dtype=torch.float32)
-
-            output_images.append(tensor)
-            output_masks.append(mask.unsqueeze(0))
-
-        if len(output_images) > 1:
-            image_out = torch.cat(output_images, dim=0)
-            mask_out = torch.cat(output_masks, dim=0)
-        else:
-            image_out = output_images[0]
-            mask_out = output_masks[0]
+        rgb, mask = load_frames(image_path)
+        image_out = torch.from_numpy(rgb)
+        mask_out = torch.from_numpy(mask)
 
         # "ui" is pushed to the frontend as the onExecuted message.
         # `filename` seeds the widget for the NEXT run (advance-after-output);
@@ -91,10 +69,15 @@ class LoadRandomImage:
 
     @classmethod
     def IS_CHANGED(
-        cls, directory, randomize_on_queue, sequential_on_queue, filename="", last_loaded="", unique_id=None
+        cls, directory="", randomize_on_queue=False, sequential_on_queue=False, filename="", last_loaded="",
+        edit_serial="", unique_id=None
     ):
+        # every parameter has a default: ComfyUI leaves a linked input out of the call, and a
+        # missing argument would only log a warning and force a re-run (a value that arrives
+        # over a link is covered by the cache key's upstream signature)
         if randomize_on_queue or sequential_on_queue:
             return float("nan")
+        directory, filename = directory or "", filename or ""
         # length-prefixed to avoid "a|b","c" vs "a","b|c" hashing identically
         return hashlib.sha256(f"{len(directory)}:{directory}|{filename}".encode("utf-8")).hexdigest()
 

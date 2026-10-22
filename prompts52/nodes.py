@@ -72,9 +72,9 @@ class LoadRandom52Prompt:
     @classmethod
     def IS_CHANGED(
         cls,
-        generator,
-        randomize,
-        seed,
+        generator="",
+        randomize=False,
+        seed=0,
         input_1="",
         input_2="",
         input_3="",

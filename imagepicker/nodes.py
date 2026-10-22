@@ -2,10 +2,9 @@ import hashlib
 import os
 
 import folder_paths
-import numpy as np
 import torch
-from PIL import Image, ImageOps, ImageSequence
 
+from .. import imageload
 from .selection import IMAGE_EXTENSIONS, PathError, join_inside, split_image_path
 
 
@@ -39,29 +38,9 @@ class ImagePicker:
 
     def load_image(self, image):
         path = resolve_image(image)
-        img = Image.open(path)
-
-        output_images = []
-        output_masks = []
-        for frame in ImageSequence.Iterator(img):
-            frame = ImageOps.exif_transpose(frame)
-            if frame.mode == "I":
-                frame = frame.point(lambda i: i * (1 / 255))
-            rgb_image = frame.convert("RGB")
-            output_images.append(torch.from_numpy(np.array(rgb_image).astype(np.float32) / 255.0)[None,])
-            if "A" in frame.getbands():
-                mask = 1.0 - torch.from_numpy(np.array(frame.getchannel("A")).astype(np.float32) / 255.0)
-            else:
-                mask = torch.zeros((frame.height, frame.width), dtype=torch.float32)
-            output_masks.append(mask.unsqueeze(0))
-
-        first_shape = output_images[0].shape
-        if len(output_images) > 1 and all(t.shape == first_shape for t in output_images):
-            image_out = torch.cat(output_images, dim=0)
-            mask_out = torch.cat(output_masks, dim=0)
-        else:
-            # one image, or animation frames of differing sizes that can't batch
-            image_out, mask_out = output_images[0], output_masks[0]
+        rgb, mask = imageload.load_frames(path)
+        image_out = torch.from_numpy(rgb)
+        mask_out = torch.from_numpy(mask)
 
         height, width = image_out.shape[1], image_out.shape[2]
         return {
@@ -70,7 +49,7 @@ class ImagePicker:
         }
 
     @classmethod
-    def IS_CHANGED(cls, image):
+    def IS_CHANGED(cls, image=None):
         try:
             path = resolve_image(image)
         except (PathError, FileNotFoundError):

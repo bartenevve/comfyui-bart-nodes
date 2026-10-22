@@ -56,6 +56,46 @@ class ResolveFilenamesTests(unittest.TestCase):
         self.assertEqual(first[0], "a.png")
         self.assertEqual(second[0], "b.png")  # not "a.png" again, despite identical stale input
 
+    def test_sequential_re_picking_the_file_that_just_ran_repeats_it(self):
+        # run 1 starts at a.png and the frontend moves the widget on to b.png; the user then picks
+        # a.png again by hand (the frontend marks that with a fresh edit_serial) and expects a.png
+        state = {}
+        first = resolve_filenames(self.files, False, True, "a.png", unique_id="n", state=state, edit_serial="s1")
+        self.assertEqual(first, ("a.png", "b.png"))
+        again = resolve_filenames(self.files, False, True, "a.png", unique_id="n", state=state, edit_serial="s2")
+        self.assertEqual(again[0], "a.png")
+
+    def test_sequential_with_a_serial_ignores_the_widget_until_the_user_edits_it(self):
+        # a batch of 3 queued from one frontend: the UI synced run 1's advance into the widget
+        # before run 3 was serialized, so the widget values are c.png, c.png, a.png - no equality
+        # test can tell that a.png is stale, but the unchanged serial can
+        state = {}
+        seen = [
+            resolve_filenames(self.files, False, True, widget, unique_id="n", state=state, edit_serial="s1")[0]
+            for widget in ("c.png", "c.png", "a.png")
+        ]
+        self.assertEqual(seen, ["c.png", "a.png", "b.png"])
+
+    def test_sequential_first_run_with_a_serial_uses_the_widget(self):
+        chosen, nxt = resolve_filenames(self.files, False, True, "b.png", unique_id="n", state={}, edit_serial="s1")
+        self.assertEqual((chosen, nxt), ("b.png", "c.png"))
+
+    def test_sequential_batch_with_one_edit_serial_still_advances(self):
+        # a batch queued after a hand pick: every item carries the same widget value AND the same serial
+        state = {}
+        seen = [
+            resolve_filenames(self.files, False, True, "b.png", unique_id="n", state=state, edit_serial="s7")[0]
+            for _ in range(3)
+        ]
+        self.assertEqual(seen, ["b.png", "c.png", "a.png"])
+
+    def test_sequential_without_a_serial_keeps_the_value_based_rule(self):
+        # an API caller never sets edit_serial: identical input twice is a queued duplicate
+        state = {}
+        first = resolve_filenames(self.files, False, True, "a.png", unique_id="n", state=state)
+        second = resolve_filenames(self.files, False, True, "a.png", unique_id="n", state=state)
+        self.assertEqual((first[0], second[0]), ("a.png", "b.png"))
+
     def test_sequential_honors_a_widget_that_moved_since_the_last_run(self):
         # sequential -> user picks another file by hand -> sequential again:
         # the pointer must not override what the widget now shows
@@ -90,12 +130,12 @@ class ResolveFilenamesTests(unittest.TestCase):
         self.assertEqual(seen, ["a.png", "b.png", "c.png", "a.png"])
 
     def test_sequential_falls_back_to_filename_when_pointer_is_stale(self):
-        state = {("node1", None): ("deleted.png", "x.png")}
+        state = {("node1", None): ("deleted.png", "x.png", "")}
         chosen, _ = resolve_filenames(self.files, False, True, "b.png", unique_id="node1", state=state)
         self.assertEqual(chosen, "b.png")
 
     def test_sequential_falls_back_to_first_file_when_pointer_and_input_both_stale(self):
-        state = {("node1", None): ("deleted.png", "also_deleted.png")}
+        state = {("node1", None): ("deleted.png", "also_deleted.png", "")}
         chosen, _ = resolve_filenames(self.files, False, True, "also_deleted.png", unique_id="node1", state=state)
         self.assertEqual(chosen, "a.png")
 

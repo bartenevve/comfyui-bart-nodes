@@ -20,6 +20,8 @@ Every section below follows the same layout: a facts table, **Widgets**, **Outpu
 
 Conventions shared by the nodes: buttons (🎲, ✨, ⤢ ...) act **without executing the graph**; whatever a node last produced is shown in its preview and survives saving and reopening the workflow; seeds stay below 2⁵³ so the number shown is exactly the number used; every text widget can be turned into an input and linked.
 
+The four image loaders (Load Random Image, Image Picker, Smart Load Image, Load Random Booru Image) decode files the same way: a truncated or partly downloaded file loads as far as it goes instead of stopping the run, 16-bit grayscale (a depth map) is scaled to 8 bits instead of being clipped to white, a palette image's transparency (GIF, PNG8) reaches `MASK`, EXIF rotation is applied, and an animation becomes a batch of its frames (frames of another size than the first are dropped).
+
 ## Install
 
 **From an archive:** extract the `comfyui-bart-nodes` folder into `<ComfyUI>/custom_nodes/` and restart ComfyUI.
@@ -75,6 +77,8 @@ The two checkboxes are mutually exclusive in the UI, and the server also rejects
 ### How it works
 
 **Sequential semantics.** A run outputs the file **currently** selected (the one already in the preview); the advance to the next happens **after**, preparing the start for the next run. The pointer lives in server memory per node `unique_id` + `directory`, together with the `filename` the previous run was given. That protects against the batch-queue race (several runs queued before the first finishes all carry the same stale `filename`; they follow the pointer instead of loading the same file repeatedly) while still honouring the widget: if `filename` differs from last time — you picked another file, rolled the dice, or reloaded a workflow — the file shown in the widget loads.
+
+The frontend adds a hidden `edit_serial` that it renews whenever **you** change the file by hand (dropdown, 🎲, upload). With a serial present the rule gets simpler and stricter: the same serial as the previous run means no hand edit in between, so the pointer is followed whatever the widget says (a batch whose later items were serialized after the UI had already synced an earlier run's advance carries an in-between value that no comparison could recognise as stale); a new serial means a deliberate pick, which wins **even when it is the very file the previous run started with** - pick `a.png` again to repeat it. Callers that never send a serial (API scripts) keep the value-based rule.
 
 The preview shows what **actually** loaded on the last run (it survives saving and reopening the workflow), not what is queued next — except while `randomize_on_queue` is checked, where it is hidden.
 
@@ -238,6 +242,10 @@ Same mutual exclusion, advance-after-output timing and batch-race protection as 
 - **Total count** — the `<posts count="N">` header of the same call without `json=1`.
 - **File URL** — `&id=<id>` returns that one post; its `file_url` (or `images/<directory>/<image>`) must be on the site's own domain or a subdomain (`img.xbooru.com`).
 - **Depth limit** — measured on both sites: answers up to an offset of **200,000** (`pid * limit`), refuses beyond with `API limited due to abuse`.
+
+**Downloads and the cache.** Every original is fetched with the site's own `Referer`, checked and only then cached under ComfyUI's temp folder (`random_booru/`, keyed by a hash of the URL), so a preview and the run after it download once, and a post that is already on disk is shown without asking the board anything (the post's file URL is remembered). A body that is shorter than the server's `Content-Length`, or does not start like an image (the HTML post page that hosts send when they reject a hotlink), is an error and is **not** cached - it would otherwise break that post until the temp folder was cleaned. The cache is capped at 512 MB: the least recently used files are deleted past that. Redirects are followed only within the site's own domain.
+
+**Failed runs.** In `increment_on_queue` mode a run that fails on a flaky network (a timeout, HTTP 408/429/5xx, a cut-off transfer) does not use up its position: the next queue tries the same post. A post that is gone for good (HTTP 404, no file URL) still moves on, so the run can never get stuck on it. Gelbooru's search page without any thumbnail and without its "Nobody here but us chickens" notice (a block or maintenance page, a changed layout) is reported as an error, not as "no posts".
 
 **Adding another booru.** `booru/sources/base.py` defines the interface (`Post` + `BooruSource`: `count()`, `page()`, `resolve_file_url()`); `gelbooru.py` implements it, `moebooru.py` and `dapi.py` are engine base classes (a new site on either only sets `name`, `origin` and `domain`), and `booru/sources/__init__.py` maps names to classes. Registering a module there makes it appear in the `source` combo with no node or frontend change. Planned and ruled-out sites, with reasons, are in [ROADMAP.md](ROADMAP.md).
 
@@ -412,7 +420,7 @@ The list outputs make a video node fed by `prompt` + `duration` run once per cli
 | Run the graph, `generated` not empty | The saved text is output **as is**: nothing is sent to Ollama, hand edits included. This also holds when you changed the request after generating: the node never silently replaces text you may have edited; it shows `⚠ inputs changed since this text was generated` instead, and **Regenerate** redoes it. |
 | Run the graph, `generated` empty | The run generates first (with the `seed` widget), outputs the result and writes it into `generated`, so the next run reuses it. |
 
-**Linked inputs.** Any widget can be turned into an input and fed by a link (for example one shared `duration` for this node and the video node). The graph uses the linked value. The **Generate button** runs outside the graph, so it can only read a linked value from a Primitive-style source node (`Int`, `Primitive`, ...); if a widget is fed by a node whose output is computed when the graph runs, the button says so and does nothing. Unlink it or use a Primitive node.
+**Linked inputs.** Any widget can be turned into an input and fed by a link (for example one shared `duration` for this node and the video node). The graph uses the linked value. The **Generate button** runs outside the graph, so it can only read a linked value from a Primitive-style source node (`Int`, `Primitive`, ...); if a widget is fed by a node whose output is computed when the graph runs, the button says so and does nothing. Unlink it or use a Primitive node. A linked `seed` is sent as it is (the button can't change a value that comes over a link), so Regenerate then repeats the same take.
 
 **`story` (over 15 s).** A planner splits the video into clips of about 10 s, then each clip is written as its own prompt with the characters carried over and "end of clip N = start of clip N+1". In `generated` the clips are separated by `=== CLIP 2 (10 s) ===` marker lines (edit them freely; text before the first marker counts as a clip too); `prompt` outputs one string per clip.
 
@@ -575,7 +583,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 
 **Image Picker.** Its routes take a subfolder and a file name relative to ComfyUI's input folder and refuse `..`, absolute paths and drive letters; only image files are listed or turned into thumbnails. The check is by path, not by realpath, so a symlinked collection inside the input folder works (as with the stock `/view`). Anyone reaching the port can read the images in the input folder and make the server generate thumbnails (cached in the temp folder).
 
-**Booru node.** It makes **outbound requests to a third-party image board** from the ComfyUI host, and any prompt containing it does so on execution. The `/random_booru/*` routes take `source` + `tags` + `index`/`post_id`, never a raw URL. The file URL itself is read out of third-party responses (HTML for Gelbooru, JSON for the rest), so every candidate must be on the source's own domain or a subdomain (`gelbooru.com` / `imgN.gelbooru.com`, `yande.re` / `files.yande.re`, `xbooru.com` / `img.xbooru.com`, ...); a candidate on any other host is skipped, and `download()` re-checks the host right before the request goes out, so these endpoints can't be pointed at an arbitrary target (no SSRF). They are unauthenticated like everything else here: anyone reaching the port can make your server fetch booru pages and fill the temp cache. Downloaded content is arbitrary third-party imagery, entirely unfiltered by rating, and cached copies stay in ComfyUI's temp directory until it is cleaned.
+**Booru node.** It makes **outbound requests to a third-party image board** from the ComfyUI host, and any prompt containing it does so on execution. The `/random_booru/*` routes take `source` + `tags` + `index`/`post_id`, never a raw URL. The file URL itself is read out of third-party responses (HTML for Gelbooru, JSON for the rest), so every candidate must be on the source's own domain or a subdomain (`gelbooru.com` / `imgN.gelbooru.com`, `yande.re` / `files.yande.re`, `xbooru.com` / `img.xbooru.com`, ...); a candidate on any other host is skipped, `download()` re-checks the host right before the request goes out, and the HTTP client refuses a redirect that leaves the domain (the Cookie and Referer never travel to another host), so these endpoints can't be pointed at an arbitrary target (no SSRF). They are unauthenticated like everything else here: anyone reaching the port can make your server fetch booru pages and fill the temp cache. Downloaded content is arbitrary third-party imagery, entirely unfiltered by rating, and cached copies stay in ComfyUI's temp directory until it is cleaned.
 
 **52prompts node.** Same outbound-request caveat: the site sees your server's IP, and `/random_prompts52/pick` is unauthenticated. It takes a generator **label** from a fixed table, never a URL, and the script URL it fetches must be on the site's CDN host, so there is no SSRF. The fetched script is **not** executed as JavaScript: `prompts52/jsmini.py` has no filesystem, network or `eval` surface at all; the worst a rewritten generator can do is raise an error or return odd text.
 
@@ -607,6 +615,7 @@ The nodes themselves, their routes and the frontend widgets are checked by hand 
 __init__.py              registration of all node families, each import isolated (see CONTRIBUTING.md)
 selection.py, nodes.py, routes.py
                          Load Random Image: file selection (list_images, resolve_filenames), the node, /random_image/*
+imageload.py             shared image decoding for every loader: damaged-file tolerance, 16-bit scaling, transparency, EXIF, frames
 booru/                   Load Random Booru Image
   selection.py           pure position logic: resolve_index() (random / fixed / increment)
   pick.py                position -> post -> local file, incl. retry on non-image posts
@@ -620,6 +629,7 @@ booru/                   Load Random Booru Image
 imagepicker/             Image Picker
   selection.py           pure logic: safe subfolder/filename cleaning, folder listing, thumbnail buckets + cache names
   nodes.py, routes.py    the node; /image_picker/list, /image_picker/thumb (cached WebP thumbnails)
+  thumbs.py              thumbnail generation (unique temp file per request, then an atomic rename)
 smartload/               Smart Load Image
   selection.py           pure logic: clamp_box(), aspect-lock / snap choices
   nodes.py               the node: input-folder file, EXIF transpose, crop per frame

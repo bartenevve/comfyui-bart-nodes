@@ -1,9 +1,8 @@
 import hashlib
 
-import numpy as np
 import torch
-from PIL import Image, ImageOps, ImageSequence
 
+from .. import imageload
 from . import pick as picker
 from . import sources
 
@@ -21,6 +20,8 @@ class LoadRandomBooruImage:
             },
             "optional": {
                 "last_post_id": ("STRING", {"default": ""}),
+                # written by the frontend whenever the user changes the position by hand (see selection.py)
+                "edit_serial": ("STRING", {"default": ""}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -40,6 +41,7 @@ class LoadRandomBooruImage:
         increment_on_queue,
         index,
         last_post_id="",
+        edit_serial="",
         unique_id=None,
     ):
         result = picker.pick(
@@ -49,6 +51,7 @@ class LoadRandomBooruImage:
             increment_on_queue=increment_on_queue,
             index=index,
             unique_id=unique_id,
+            edit_serial=edit_serial,
         )
 
         image_out, mask_out = load_tensors(result["path"])
@@ -76,10 +79,13 @@ class LoadRandomBooruImage:
 
     @classmethod
     def IS_CHANGED(
-        cls, source, tags, random_post, increment_on_queue, index, last_post_id="", unique_id=None
+        cls, source="", tags="", random_post=False, increment_on_queue=False, index=0, last_post_id="",
+        edit_serial="", unique_id=None
     ):
+        # defaults everywhere: ComfyUI leaves a linked input out of the call (see LoadRandomImage)
         if random_post or increment_on_queue:
             return float("nan")
+        source, tags = source or "", tags or ""
         # length-prefixed to avoid "a|b","c" vs "a","b|c" hashing identically
         payload = f"{len(source)}:{source}|{len(tags)}:{tags}|{index}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -97,34 +103,5 @@ class LoadRandomBooruImage:
 
 def load_tensors(path):
     """Decode a downloaded file into ComfyUI's (IMAGE, MASK) tensor pair."""
-    img = Image.open(path)
-
-    output_images = []
-    output_masks = []
-    for frame in ImageSequence.Iterator(img):
-        frame = ImageOps.exif_transpose(frame)
-        if frame.mode == "I":
-            frame = frame.point(lambda i: i * (1 / 255))
-        rgb_image = frame.convert("RGB")
-        arr = np.array(rgb_image).astype(np.float32) / 255.0
-        tensor = torch.from_numpy(arr)[None,]
-
-        if "A" in frame.getbands():
-            mask_arr = np.array(frame.getchannel("A")).astype(np.float32) / 255.0
-            mask = 1.0 - torch.from_numpy(mask_arr)
-        else:
-            mask = torch.zeros((frame.height, frame.width), dtype=torch.float32)
-
-        output_images.append(tensor)
-        output_masks.append(mask.unsqueeze(0))
-
-    if len(output_images) > 1:
-        # animated GIFs from a booru vary in frame size once the first frame is
-        # a full canvas and the rest are diffs; torch.cat would explode, so
-        # only batch frames that genuinely share a shape
-        first_shape = output_images[0].shape
-        if all(t.shape == first_shape for t in output_images):
-            return torch.cat(output_images, dim=0), torch.cat(output_masks, dim=0)
-        return output_images[0], output_masks[0]
-
-    return output_images[0], output_masks[0]
+    rgb, mask = imageload.load_frames(path)
+    return torch.from_numpy(rgb), torch.from_numpy(mask)

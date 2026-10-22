@@ -2,10 +2,9 @@ import hashlib
 import os
 
 import folder_paths
-import numpy as np
 import torch
-from PIL import Image, ImageOps, ImageSequence
 
+from .. import imageload
 from .selection import ASPECT_LOCKS, MAX_PIXELS, SNAPS, clamp_box
 
 
@@ -39,37 +38,11 @@ class SmartLoadImage:
 
     def load_image(self, image, crop_x, crop_y, crop_width, crop_height, aspect_lock="free", snap_to="1"):
         image_path = folder_paths.get_annotated_filepath(image)
-        img = Image.open(image_path)
-
-        output_images = []
-        output_masks = []
-        for frame in ImageSequence.Iterator(img):
-            frame = ImageOps.exif_transpose(frame)
-            if frame.mode == "I":
-                frame = frame.point(lambda i: i * (1 / 255))
-
-            x, y, width, height = clamp_box(crop_x, crop_y, crop_width, crop_height, frame.width, frame.height)
-            frame = frame.crop((x, y, x + width, y + height))
-
-            rgb_image = frame.convert("RGB")
-            arr = np.array(rgb_image).astype(np.float32) / 255.0
-            output_images.append(torch.from_numpy(arr)[None,])
-
-            if "A" in frame.getbands():
-                mask_arr = np.array(frame.getchannel("A")).astype(np.float32) / 255.0
-                mask = 1.0 - torch.from_numpy(mask_arr)
-            else:
-                mask = torch.zeros((frame.height, frame.width), dtype=torch.float32)
-            output_masks.append(mask.unsqueeze(0))
-
-        first_shape = output_images[0].shape
-        if len(output_images) > 1 and all(t.shape == first_shape for t in output_images):
-            image_out = torch.cat(output_images, dim=0)
-            mask_out = torch.cat(output_masks, dim=0)
-        else:
-            # a single image, or animation frames of differing sizes (batching
-            # those would fail): keep the first
-            image_out, mask_out = output_images[0], output_masks[0]
+        rgb, mask = imageload.load_frames(
+            image_path, box=lambda width, height: clamp_box(crop_x, crop_y, crop_width, crop_height, width, height)
+        )
+        image_out = torch.from_numpy(rgb)
+        mask_out = torch.from_numpy(mask)
 
         height_out, width_out = image_out.shape[1], image_out.shape[2]
         return {
@@ -78,10 +51,13 @@ class SmartLoadImage:
         }
 
     @classmethod
-    def IS_CHANGED(cls, image, crop_x, crop_y, crop_width, crop_height, aspect_lock="free", snap_to="1"):
+    def IS_CHANGED(cls, image=None, crop_x=0, crop_y=0, crop_width=0, crop_height=0, aspect_lock="free", snap_to="1"):
         digest = hashlib.sha256()
-        with open(folder_paths.get_annotated_filepath(image), "rb") as handle:
-            digest.update(handle.read())
+        try:
+            with open(folder_paths.get_annotated_filepath(image), "rb") as handle:
+                digest.update(handle.read())
+        except Exception:  # no file to hash (unset, linked, missing): VALIDATE_INPUTS reports it
+            return float("nan")
         digest.update(f"|{crop_x},{crop_y},{crop_width},{crop_height}".encode("utf-8"))
         return digest.hexdigest()
 

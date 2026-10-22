@@ -111,6 +111,7 @@ class MiniMaxH3Prompt:
     def IS_CHANGED(cls, generated="", **inputs):
         # saved text present: output depends on it alone. Absent: every input
         # (seed included) decides what gets generated.
+        generated = generated or ""
         if generated.strip():
             return hashlib.sha256(generated.encode("utf-8")).hexdigest()
         payload = "|".join(f"{key}={inputs[key]!r}" for key in sorted(inputs) if key != "generated_key")

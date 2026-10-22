@@ -1,11 +1,33 @@
 import os
+import threading
 import urllib.parse
+from collections import OrderedDict
 
-from .selection import resolve_index
+from . import fetch
+from .selection import resolve_index, restore_increment, snapshot_increment
 from .sources import get_source
 from .sources.base import IMAGE_EXTENSIONS
 
 RANDOM_RETRIES = 5
+
+# post -> original file URL, remembered from the pick that resolved it: showing a post that is
+# already on disk (every preview, every reload) then costs no request to the board at all
+_FILE_URLS = OrderedDict()
+_FILE_URLS_LOCK = threading.Lock()
+_FILE_URLS_MAX = 512
+
+
+def remember_file_url(source_name, post_id, url):
+    with _FILE_URLS_LOCK:
+        _FILE_URLS[(source_name, str(post_id))] = url
+        _FILE_URLS.move_to_end((source_name, str(post_id)))
+        while len(_FILE_URLS) > _FILE_URLS_MAX:
+            _FILE_URLS.popitem(last=False)
+
+
+def known_file_url(source_name, post_id):
+    with _FILE_URLS_LOCK:
+        return _FILE_URLS.get((source_name, str(post_id)))
 
 
 class NoPostsError(RuntimeError):
@@ -34,6 +56,7 @@ def pick(
     index=0,
     unique_id=None,
     download=True,
+    edit_serial="",
 ):
     """Resolve a position into a post (and its local file), honoring the mode.
 
@@ -53,6 +76,11 @@ def pick(
     if total <= 0:
         raise NoPostsError(f"no posts found for tags: {tags or '(any)'}")
 
+    key = search_key(source_name, tags)
+    # a run that dies on a flaky network must not use up its position: step back and the
+    # next queue tries the same post (a post that is gone for good still moves on)
+    previous = snapshot_increment(unique_id, key) if increment_on_queue else None
+
     attempts = RANDOM_RETRIES if (random_post or increment_on_queue) else 1
     last_error = None
     for _ in range(attempts):
@@ -62,10 +90,19 @@ def pick(
             increment_on_queue,
             index,
             unique_id=unique_id,
-            search_key=search_key(source_name, tags),
+            search_key=key,
+            edit_serial=edit_serial,
         )
-        post = source.get_post(tags, chosen)
-        file_url = source.resolve_file_url(post.post_id)
+        try:
+            post = source.get_post(tags, chosen)
+            file_url = source.resolve_file_url(post.post_id)
+            remember_file_url(source_name, post.post_id, file_url)
+            if is_image_url(file_url):
+                path = source.download(file_url) if download else None
+        except fetch.FetchError as exc:
+            if increment_on_queue and exc.transient:
+                restore_increment(unique_id, key, previous)
+            raise
 
         if not is_image_url(file_url):
             last_error = UnsupportedPostError(
@@ -84,7 +121,7 @@ def pick(
             "page_url": post.page_url,
             "thumb_url": post.thumb_url,
             "file_url": file_url,
-            "path": source.download(file_url) if download else None,
+            "path": path,
         }
 
     raise last_error
@@ -93,7 +130,14 @@ def pick(
 def fetch_post_file(source_name, post_id):
     """Local path of a post's original file, by post id."""
     source = get_source(source_name)
+    known = known_file_url(source_name, post_id)
+    if known:
+        try:
+            return source.download(known)  # served from disk when it is already there
+        except (fetch.FetchError, LookupError):
+            pass  # a stale link: ask the board again below
     file_url = source.resolve_file_url(str(post_id))
     if not is_image_url(file_url):
         raise UnsupportedPostError(f"post {post_id} is not a still image: {file_url}")
+    remember_file_url(source_name, post_id, file_url)
     return source.download(file_url)

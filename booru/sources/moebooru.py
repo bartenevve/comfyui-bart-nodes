@@ -4,7 +4,7 @@ import time
 import urllib.parse
 
 from .. import fetch
-from .base import BooruSource, Post, parse_count, url_on_domain  # noqa: F401  parse_count re-exported
+from .base import BooruSource, Post, parse_count, url_on_domain
 
 _COUNT_TTL = 60.0
 _count_cache = {}
@@ -84,7 +84,7 @@ class MoebooruSource(BooruSource):
 
     def _get_text(self, path, **query):
         url = f"{self.origin}{path}?{urllib.parse.urlencode(query)}"
-        return fetch.get_text(url, referer=self.origin)
+        return fetch.get_text(url, referer=self.origin, domain=self.domain)
 
     def count(self, tags):
         key = (self.name, tags)
@@ -118,7 +118,7 @@ class MoebooruSource(BooruSource):
     def download(self, url):
         if not url_on_domain(url, self.domain):
             raise LookupError(f"refusing to download from a non-{self.domain} host: {url}")
-        return fetch.cached_download(url, referer=self.origin)
+        return fetch.cached_download(url, referer=self.origin, domain=self.domain)
 
 
 class YandeRe(MoebooruSource):

@@ -9,6 +9,7 @@ from .base import BooruSource, Post
 
 BASE_URL = "https://gelbooru.com/index.php"
 ORIGIN = "https://gelbooru.com/"
+DOMAIN = "gelbooru.com"
 
 PAGE_SIZE = 42
 # Anonymous deep-pagination cap: pid=19992 still returns a full page,
@@ -33,6 +34,9 @@ _LAST_PAGE_PID = re.compile(r'pid=(\d+)"[^>]*alt="last page"')
 _ORIGINAL_URL = re.compile(r'href="(https?://[^"]*?gelbooru\.com/+images/[^"]+)"')
 _OG_IMAGE = re.compile(r'property="og:image"\s+content="([^"]+)"')
 _MAIN_IMAGE = re.compile(r'<img[^>]*\sid="image"[^>]*\ssrc="([^"]+)"')
+
+# the page of a search with no matches says this
+NO_RESULTS = "Nobody here but us chickens"
 
 _METADATA_TOKEN = re.compile(r"^(score|rating|id|user|source|md5|width|height):")
 
@@ -125,7 +129,7 @@ class Gelbooru(BooruSource):
     max_positions = MAX_POSITIONS
 
     def _get_html(self, url):
-        return fetch.get_text(url, referer=ORIGIN, cookie=COOKIE)
+        return fetch.get_text(url, referer=ORIGIN, cookie=COOKIE, domain=DOMAIN)
 
     def count(self, tags):
         key = (self.name, tags)
@@ -145,7 +149,11 @@ class Gelbooru(BooruSource):
         html = self._get_html(listing_url(tags, 0))
         first_page = parse_listing(html)
         if not first_page:
-            return 0
+            if NO_RESULTS in html:
+                return 0
+            # no thumbnails and no "nothing here" notice: a block page, a maintenance page or a
+            # changed layout. Reporting 0 would read as "no posts for these tags" (and be cached)
+            raise LookupError("unexpected page from gelbooru (no posts and no 'no results' notice): the site may be blocking requests or have changed its layout")
 
         last_pid = parse_last_pid(html)
         if last_pid is None:
@@ -181,4 +189,4 @@ class Gelbooru(BooruSource):
         if not is_gelbooru_url(url):
             raise LookupError(f"refusing to download from a non-gelbooru host: {url}")
         # image hosts 302 to the post page without a same-site Referer
-        return fetch.cached_download(url, referer=ORIGIN, cookie=COOKIE)
+        return fetch.cached_download(url, referer=ORIGIN, cookie=COOKIE, domain=DOMAIN)

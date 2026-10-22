@@ -29,7 +29,8 @@ class WanLatentTrim:
                         "step": 1,
                         "tooltip": (
                             "Pixel frames to remove from the start. Converted to latent frames as "
-                            f"round(N / {TEMPORAL_RATIO}); multiples of {TEMPORAL_RATIO} are exact."
+                            f"N / {TEMPORAL_RATIO} rounded to the nearest whole frame, halves up (not Python's round-half-even); "
+                            f"multiples of {TEMPORAL_RATIO} are exact."
                         ),
                     },
                 ),
@@ -68,6 +69,12 @@ class WanLatentTrim:
         mask = latent.get("noise_mask")
         if isinstance(mask, torch.Tensor) and mask.dim() == 5 and mask.shape[2] == num_frames:
             latent["noise_mask"] = mask[:, :, cut:, :, :].contiguous()
+        elif isinstance(mask, torch.Tensor) and mask.dim() == 5 and mask.shape[2] != 1:
+            logger.warning(
+                "WanLatentTrim: noise_mask has %d frames but the latent has %d; left untouched, "
+                "so it no longer lines up with the trimmed samples",
+                mask.shape[2], num_frames,
+            )
 
         logger.info(
             "WanLatentTrim: removed %d latent frame(s) (%d px frames) from the start; T %d -> %d",

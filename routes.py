@@ -9,9 +9,16 @@ from server import PromptServer
 from .selection import list_images
 
 
+def _has_nul(*values):
+    """A NUL byte makes os.path raise ValueError, which would surface as a bare 500."""
+    return any("\x00" in value for value in values)
+
+
 @PromptServer.instance.routes.get("/random_image/input_dir")
 async def get_input_dir(request):
     subfolder = request.rel_url.query.get("subfolder", "")
+    if _has_nul(subfolder):
+        return web.json_response({"error": "invalid 'subfolder' parameter"}, status=400)
     base = folder_paths.get_input_directory()
     full = os.path.join(base, subfolder) if subfolder else base
     return web.json_response({"directory": os.path.realpath(full)})
@@ -22,6 +29,8 @@ async def pick_random_image(request):
     directory = request.rel_url.query.get("dir", "")
     if not directory:
         return web.json_response({"error": "missing 'dir' parameter"}, status=400)
+    if _has_nul(directory):
+        return web.json_response({"error": "invalid 'dir' parameter"}, status=400)
 
     real_dir = os.path.realpath(directory)
     if not os.path.isdir(real_dir):
@@ -43,6 +52,8 @@ async def list_images_route(request):
     directory = request.rel_url.query.get("dir", "")
     if not directory:
         return web.json_response({"error": "missing 'dir' parameter"}, status=400)
+    if _has_nul(directory):
+        return web.json_response({"error": "invalid 'dir' parameter"}, status=400)
 
     real_dir = os.path.realpath(directory)
     if not os.path.isdir(real_dir):
@@ -58,12 +69,18 @@ async def view_image(request):
     filename = request.rel_url.query.get("filename", "")
     if not directory or not filename:
         return web.json_response({"error": "missing 'dir' or 'filename' parameter"}, status=400)
+    if _has_nul(directory, filename):
+        return web.json_response({"error": "invalid 'dir' or 'filename' parameter"}, status=400)
 
     real_dir = os.path.realpath(directory)
     full_path = os.path.realpath(os.path.join(real_dir, filename))
 
     # reject any filename that resolves outside the requested directory
-    if os.path.commonpath([real_dir, full_path]) != real_dir:
+    try:
+        inside = os.path.commonpath([real_dir, full_path]) == real_dir
+    except ValueError:  # Windows: the two paths are on different drives
+        inside = False
+    if not inside:
         return web.json_response({"error": "invalid filename"}, status=400)
 
     if not os.path.isfile(full_path):

@@ -21,7 +21,7 @@ def list_images(directory):
 
 
 def resolve_filenames(
-    files, randomize_on_queue, sequential_on_queue, filename, unique_id=None, directory=None, state=None
+    files, randomize_on_queue, sequential_on_queue, filename, unique_id=None, directory=None, state=None, edit_serial=""
 ):
     """Returns (chosen, next_filename).
 
@@ -43,6 +43,15 @@ def resolve_filenames(
     small per-graph integer, not globally unique - two unrelated workflows
     reusing the same node id would otherwise share (and corrupt) each other's
     pointer.
+
+    `edit_serial` removes the guesswork from that rule. The frontend writes a fresh
+    serial whenever the user changes the widget by hand. With a serial set, a run
+    carrying the same serial as the previous one has no hand edit in between, so the
+    pointer is right whatever the widget says (a batch whose later items were
+    serialized after the UI synced an earlier run's advance carries an in-between
+    value no equality test could recognise); a different serial is a deliberate
+    pick - even of the very file the previous run started with - and the widget
+    wins. API callers that never set it (always "") keep the value-based rule above.
     """
     if state is None:
         state = _SEQUENTIAL_STATE
@@ -54,15 +63,19 @@ def resolve_filenames(
     if sequential_on_queue:
         key = (unique_id, directory)
         with _SEQUENTIAL_LOCK:
-            pointer, seen = state.get(key, (None, None))
-            if pointer in files and seen == filename:
+            pointer, seen, seen_serial = state.get(key, (None, None, ""))
+            if edit_serial:
+                follow_pointer = edit_serial == seen_serial
+            else:
+                follow_pointer = seen == filename and not seen_serial
+            if pointer in files and follow_pointer:
                 chosen = pointer
             elif filename in files:
                 chosen = filename
             else:
                 chosen = pointer if pointer in files else files[0]
             next_filename = files[(files.index(chosen) + 1) % len(files)]
-            state[key] = (next_filename, filename)
+            state[key] = (next_filename, filename, edit_serial)
         return chosen, next_filename
 
     chosen = filename if (filename and filename in files) else files[0]

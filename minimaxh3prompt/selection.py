@@ -36,6 +36,9 @@ class InputError(ValueError):
 
 def normalize_url(url):
     """Base URL without a trailing slash; only http/https is accepted."""
+    if url is not None and not isinstance(url, str):
+        # the Generate route takes this straight from JSON: a number or list must be a 400, not an AttributeError
+        raise InputError(f"ollama_url must be text like http://host:11434, got: {url!r}")
     url = (url or "").strip()
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:

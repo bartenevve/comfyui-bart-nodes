@@ -35,6 +35,17 @@ app.registerExtension({
             // node actually output last run" again after reopening a workflow
             lastPostWidget.computeSize = () => [0, -4];
 
+            // edit_serial tells the server "the user set this position by hand" (a fresh value
+            // per edit), so typing back the very number the previous run started with isn't
+            // mistaken for a queued duplicate of that run. Hidden and persisted like last_post_id.
+            const editSerialWidget = node.widgets.find((w) => w.name === "edit_serial");
+            if (editSerialWidget) editSerialWidget.computeSize = () => [0, -4];
+            function markHandPicked() {
+                if (editSerialWidget) {
+                    editSerialWidget.value = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+                }
+            }
+
             const img = document.createElement("img");
             img.style.width = "100%";
             img.style.objectFit = "contain";
@@ -109,6 +120,7 @@ app.registerExtension({
                         return;
                     }
                     indexWidget.value = data.index;
+                    if (mode === "random") markHandPicked();  // the dice wrote a position of its own
                     lastPostWidget.value = data.post_id;
                     node.updateBooruPreview(data.post_id);
                     setInfo(
@@ -130,15 +142,26 @@ app.registerExtension({
             indexWidget.callback = function (value) {
                 // don't auto-fetch on every spinner click - the site is remote
                 // and each step would be a request; the button loads it
+                markHandPicked();
                 setInfo("index " + value + " — press ↧ Load index to preview");
                 return origIndexCallback ? origIndexCallback.apply(this, arguments) : undefined;
             };
 
+            // bring back what the last run loaded. Needed twice: here for a fresh node, and from
+            // onConfigure for a node loaded from a workflow - LiteGraph creates it first (this
+            // function, widgets still at their defaults) and only then applies the saved values
+            node.restoreBooruPreview = function () {
+                // a node (or an old workflow) that has no serial yet gets one now, so the server
+                // treats every later run as "no hand edit since the last run" until the user edits
+                if (editSerialWidget && !editSerialWidget.value) markHandPicked();
+                if (lastPostWidget.value) {
+                    node.updateBooruPreview(lastPostWidget.value);
+                    setInfo("#" + lastPostWidget.value);
+                }
+            };
+
             updateWidgetVisibility();
-            if (lastPostWidget.value) {
-                node.updateBooruPreview(lastPostWidget.value);
-                setInfo("#" + lastPostWidget.value);
-            }
+            node.restoreBooruPreview();
 
             return result;
         };
@@ -191,6 +214,7 @@ app.registerExtension({
                 incrementW.value = false;
             }
             if (this.updateWidgetVisibility) this.updateWidgetVisibility();
+            if (this.restoreBooruPreview) this.restoreBooruPreview();
             return result;
         };
     },

@@ -15,6 +15,15 @@ class TestNormalizeUrl(unittest.TestCase):
     def test_strips_trailing_slash(self):
         self.assertEqual(selection.normalize_url(" http://host:11434/ "), "http://host:11434")
 
+    def test_a_non_string_url_is_an_input_error_not_an_attribute_error(self):
+        # the Generate route feeds this straight from JSON
+        for bad in (5, 1.5, True, ["http://host"], {"url": "http://host"}):
+            with self.subTest(url=bad):
+                with self.assertRaises(selection.InputError):
+                    selection.normalize_url(bad)
+                with self.assertRaises(selection.InputError):
+                    selection.coerce_options({**VALID, "ollama_url": bad})
+
     def test_rejects_other_schemes_and_garbage(self):
         for bad in ("", None, "host:11434", "file:///etc/passwd", "ftp://host", "http://", "javascript:alert(1)"):
             with self.subTest(url=bad):

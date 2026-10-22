@@ -7,7 +7,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _pack import module  # noqa: E402
 
-resolve_index = module("booru.selection").resolve_index
+_selection = module("booru.selection")
+resolve_index = _selection.resolve_index
+snapshot_increment = _selection.snapshot_increment
+restore_increment = _selection.restore_increment
 
 
 class FixedRng:
@@ -33,6 +36,50 @@ class TestIncrementReconcilesWithWidget(unittest.TestCase):
             chosen, widget = resolve_index(4, False, True, widget, unique_id="n", state=state)
             seen.append(chosen)
         self.assertEqual(seen, [2, 3, 0, 1])
+
+
+class TestEditSerial(unittest.TestCase):
+    def test_typing_back_the_position_that_just_ran_repeats_it(self):
+        state = {}
+        first = resolve_index(10, False, True, 5, unique_id="n", state=state, edit_serial="s1")
+        self.assertEqual(first, (5, 6))  # the frontend now moves the widget to 6
+        again = resolve_index(10, False, True, 5, unique_id="n", state=state, edit_serial="s2")
+        self.assertEqual(again[0], 5)
+
+    def test_with_a_serial_the_widget_is_ignored_until_the_user_edits_it(self):
+        # three runs of one queued batch whose later items were serialized after the UI had synced
+        # the earlier runs' advances: widget 5, 5, 6 (not a stale copy of any single value)
+        state = {}
+        seen = [resolve_index(10, False, True, widget, unique_id="n", state=state, edit_serial="s1")[0] for widget in (5, 5, 6)]
+        self.assertEqual(seen, [5, 6, 7])
+
+    def test_a_batch_queued_after_a_hand_edit_still_advances(self):
+        state = {}
+        seen = [resolve_index(10, False, True, 5, unique_id="n", state=state, edit_serial="s9")[0] for _ in range(3)]
+        self.assertEqual(seen, [5, 6, 7])
+
+    def test_without_a_serial_identical_input_is_a_queued_duplicate(self):
+        state = {}
+        seen = [resolve_index(10, False, True, 5, unique_id="n", state=state)[0] for _ in range(3)]
+        self.assertEqual(seen, [5, 6, 7])
+
+
+class TestRollback(unittest.TestCase):
+    def test_snapshot_and_restore_put_the_pointer_back(self):
+        state = {}
+        resolve_index(10, False, True, 2, unique_id="n", search_key="k", state=state)  # pointer -> 3
+        before = snapshot_increment("n", "k", state=state)
+        resolve_index(10, False, True, 2, unique_id="n", search_key="k", state=state)  # pointer -> 4
+        restore_increment("n", "k", before, state=state)
+        self.assertEqual(resolve_index(10, False, True, 2, unique_id="n", search_key="k", state=state)[0], 3)
+
+    def test_restoring_nothing_forgets_the_entry(self):
+        state = {}
+        before = snapshot_increment("n", "k", state=state)
+        self.assertIsNone(before)
+        resolve_index(10, False, True, 2, unique_id="n", search_key="k", state=state)
+        restore_increment("n", "k", before, state=state)
+        self.assertEqual(state, {})
 
 
 class TestResolveIndex(unittest.TestCase):
@@ -76,7 +123,7 @@ class TestResolveIndex(unittest.TestCase):
         self.assertEqual(other_tags, (0, 1))
 
     def test_increment_pointer_past_shrunken_total_resets(self):
-        state = {(None, None): (99, 0)}
+        state = {(None, None): (99, 0, "")}
         self.assertEqual(resolve_index(5, False, True, 0, state=state), (0, 1))
 
     def test_random_takes_precedence_over_increment(self):
