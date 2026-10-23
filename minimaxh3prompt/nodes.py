@@ -1,4 +1,5 @@
 import hashlib
+import json
 
 from . import runner
 from .selection import (
@@ -12,6 +13,14 @@ from .selection import (
     clip_durations,
     frame_size,
     split_timed_clips,
+)
+
+# What decides the text that gets generated (the frontend's CONTENT_WIDGETS, in the same order): the
+# server hands these back with the result so the "inputs changed" hint compares against what was
+# really used, not against whatever the widgets say by the time the answer arrives.
+CONTENT_WIDGETS = (
+    "model", "request", "duration", "aspect", "mode", "variant", "triggers", "dialogue", "text", "image",
+    "start", "end", "shots", "refs", "temperature", "num_ctx", "num_predict", "think", "append_no_think",
 )
 
 _WIDGETS = (
@@ -80,7 +89,10 @@ class MiniMaxH3Prompt:
     CATEGORY = "Bart's nodes/Text"
 
     def run(self, ollama_url, model, request, duration, aspect, mode, variant, seed, generated="", generated_key="", **optional):
-        width, height = frame_size(aspect, optional.get("short_side") or NUMERIC["short_side"][0])
+        try:
+            width, height = frame_size(aspect, optional.get("short_side") or NUMERIC["short_side"][0])
+        except (ValueError, ZeroDivisionError, AttributeError):
+            raise RuntimeError(f"MiniMax H3 prompt: cannot work out a frame size from aspect={aspect!r}") from None
 
         def outputs(clips, report, durations):
             frames = [d * FPS for d in durations]
@@ -102,8 +114,9 @@ class MiniMaxH3Prompt:
             result = runner.generate(values)
         except (InputError, runner.H3Error) as exc:
             raise RuntimeError(f"MiniMax H3 prompt: {exc}") from None
+        used = {name: values.get(name) for name in CONTENT_WIDGETS}
         return {
-            "ui": {"generated": [result["text"]], "report": [result["report"]]},
+            "ui": {"generated": [result["text"]], "report": [result["report"]], "used": [json.dumps(used)]},
             "result": outputs(result["clips"], result["report"], result["durations"]),
         }
 
@@ -118,14 +131,19 @@ class MiniMaxH3Prompt:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @classmethod
-    def VALIDATE_INPUTS(cls, generated=None, **inputs):
-        # None / missing = wired from another node, unknowable here
+    def VALIDATE_INPUTS(cls, generated=None, ollama_url=None, model=None, request=None, refs=None, variant=None):
+        # Only the inputs that need a check of their own are named: a catch-all (**inputs) would make
+        # ComfyUI skip its own type/range/combo validation for every other input too, and name each
+        # of the 26 in the error. None = wired from another node, unknowable here.
         if generated is None or generated.strip():
-            return True
-        needed = ("ollama_url", "model", "request", "duration", "aspect", "mode", "variant", "seed")
-        if any(inputs.get(name) is None for name in needed):
-            return True
-        values = {name: inputs[name] for name in _WIDGETS if inputs.get(name) is not None}
+            return True  # saved text is output as it is: nothing below is used
+        values = {
+            "ollama_url": ollama_url if ollama_url is not None else "http://localhost:11434",
+            "model": model if model is not None else "-",
+            "request": request if request is not None else "-",
+            "refs": refs or "",
+            "variant": variant or "auto",
+        }
         try:
             options = runner.coerce_options(values)
             if not options["request"].strip():

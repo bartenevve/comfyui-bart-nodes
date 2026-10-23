@@ -8,10 +8,12 @@ const CURSORS = {
     n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize",
 };
 
-// dropped File.type comes from the OS's MIME registration, which is sometimes
-// empty/wrong (older Windows + .webp) - fall back to the extension
+// Only what the node can actually load: the server lists, thumbnails and decodes these extensions.
+// (A HEIC / AVIF / SVG file would upload fine, then be unselectable.) The extension decides, not
+// File.type, which the OS fills in unreliably (older Windows + .webp).
+const ACCEPT = ".png,.jpg,.jpeg,.webp,.bmp,.gif";
 function isImageFile(file) {
-    return file.type.startsWith("image/") || IMAGE_EXTENSIONS.test(file.name);
+    return IMAGE_EXTENSIONS.test(file.name);
 }
 
 const clamp = (value, low, high) => Math.min(Math.max(value, low), Math.max(low, high));
@@ -107,8 +109,10 @@ function dragBox(handle, start, p0, p, ratio, W, H, snap) {
     }
     x2 = clamp(x2, 0, W);
     y2 = clamp(y2, 0, H);
-    const sx = x2 >= x1 ? 1 : -1;
-    const sy = y2 >= y1 ? 1 : -1;
+    // direction of the drag; when the pointer sits exactly on the anchor, grow towards the side
+    // that has room (an anchor on the far border would otherwise leave zero room: 0 / 0 -> NaN)
+    const sx = x2 > x1 ? 1 : x2 < x1 ? -1 : x1 >= W ? -1 : 1;
+    const sy = y2 > y1 ? 1 : y2 < y1 ? -1 : y1 >= H ? -1 : 1;
     let w = Math.abs(x2 - x1);
     let h = Math.abs(y2 - y1);
     const cx = start.x + start.w / 2;
@@ -125,7 +129,7 @@ function dragBox(handle, start, p0, p, ratio, W, H, snap) {
         else if (xMoves) { /* width drives */ }
         else w = h * ratio;
         h = w / ratio;
-        const f = Math.min(1, maxW / w, maxH / h);
+        const f = Math.min(1, w > 0 ? maxW / w : 1, h > 0 ? maxH / h : 1);
         w *= f;
         h *= f;
     } else {
@@ -200,11 +204,16 @@ app.registerExtension({
                 nw: [0, 0], n: [50, 0], ne: [100, 0], e: [100, 50], se: [100, 100], s: [50, 100], sw: [0, 100], w: [0, 50],
             };
             for (const [name, [left, top]] of Object.entries(handlePlace)) {
+                // the grab area is a 32px square (a fingertip), the visible knob inside it 10px; the
+                // widget is scaled with the canvas zoom, so on a zoomed-out graph both shrink together
                 const handle = document.createElement("div");
                 handle.dataset.handle = name;
                 handle.style.cssText =
-                    `position:absolute;left:${left}%;top:${top}%;width:10px;height:10px;margin:-5px 0 0 -5px;` +
-                    `background:#fff;border:1px solid #222;box-sizing:border-box;cursor:${CURSORS[name]};`;
+                    `position:absolute;left:${left}%;top:${top}%;width:32px;height:32px;margin:-16px 0 0 -16px;` +
+                    `display:flex;align-items:center;justify-content:center;cursor:${CURSORS[name]};touch-action:none;`;
+                const knob = document.createElement("div");
+                knob.style.cssText = "width:10px;height:10px;background:#fff;border:1px solid #222;box-sizing:border-box;pointer-events:none;";
+                handle.appendChild(knob);
                 rectEl.appendChild(handle);
             }
             overlay.appendChild(rectEl);
@@ -276,9 +285,14 @@ app.registerExtension({
                 };
             }
 
+            // A press only becomes a drag once the pointer has travelled a few pixels: a plain click on
+            // empty space must keep the crop that is there, not replace it with a minimum-size box.
+            // One pointer at a time: a second finger (a pinch, a resting palm) must not take over the
+            // drag or end it when it lifts.
+            const DRAG_THRESHOLD_PX = 4;
             let drag = null;
             overlay.addEventListener("pointerdown", (event) => {
-                if (!natW || event.button !== 0) return;
+                if (!natW || event.button !== 0 || drag || event.isPrimary === false) return;
                 event.preventDefault();
                 event.stopPropagation();
                 const start = getBox();
@@ -288,24 +302,35 @@ app.registerExtension({
                 const handle =
                     event.target.dataset.handle || (rectEl.contains(event.target) && !wholeImage ? "move" : "new");
                 overlay.setPointerCapture(event.pointerId);
-                drag = { handle, start, p0: toSource(event) };
+                drag = {
+                    handle, start, p0: toSource(event), pointerId: event.pointerId,
+                    screenX: event.clientX, screenY: event.clientY, moved: false,
+                };
             });
             overlay.addEventListener("pointermove", (event) => {
-                if (!drag) return;
+                if (!drag || event.pointerId !== drag.pointerId) return;
+                if (!drag.moved) {
+                    if (Math.hypot(event.clientX - drag.screenX, event.clientY - drag.screenY) < DRAG_THRESHOLD_PX) return;
+                    drag.moved = true;
+                }
                 const ratio = ratioOf(lockWidget.value, natW, natH);
                 const box = dragBox(drag.handle, drag.start, drag.p0, toSource(event), ratio, natW, natH, snap());
-                setBox(box);
+                if ([box.x, box.y, box.w, box.h].every(Number.isFinite) && box.w >= 1 && box.h >= 1) setBox(box);
             });
             const endDrag = (event) => {
-                if (!drag) return;
-                // a click on empty space (no drag) draws a zero-size box: treat it as "keep what was there"
-                const box = getBox();
-                if (drag.handle === "new" && (box.w < MIN_SIDE || box.h < MIN_SIDE)) setBox(drag.start);
+                if (!drag || event.pointerId !== drag.pointerId) return;
+                const moved = drag.moved;
                 drag = null;
                 try { overlay.releasePointerCapture(event.pointerId); } catch (e) { /* already released */ }
+                if (moved) {
+                    // cancelling pointerdown also cancels the mouseup that follows it, and the frontend's
+                    // change tracker (undo history, the "modified" marker, autosave) looks for that one
+                    try { window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); } catch (e) { /* ignore */ }
+                }
             };
             overlay.addEventListener("pointerup", endDrag);
             overlay.addEventListener("pointercancel", endDrag);
+            overlay.addEventListener("lostpointercapture", endDrag);
 
             // ---- image selection, upload, preview -----------------------------
             function previewUrl(name) {
@@ -367,6 +392,7 @@ app.registerExtension({
                     const resp = await fetch("/upload/image", { method: "POST", body });
                     if (resp.status !== 200) {
                         console.error("smart_load_image upload failed:", resp.status, resp.statusText);
+                        infoEl.textContent = "upload failed: HTTP " + resp.status + (resp.status === 413 ? " (file too large for the server or proxy)" : "");
                         return;
                     }
                     const data = await resp.json();
@@ -378,15 +404,18 @@ app.registerExtension({
                     loadPreview();
                 } catch (e) {
                     console.error("smart_load_image upload failed:", e);
+                    infoEl.textContent = "upload failed (network error)";
                 }
             }
 
             const fileInput = document.createElement("input");
             fileInput.type = "file";
-            fileInput.accept = "image/*";
+            fileInput.accept = ACCEPT;
             fileInput.style.display = "none";
             fileInput.addEventListener("change", () => {
-                for (const file of fileInput.files) if (isImageFile(file)) uploadFile(file);
+                const usable = [...fileInput.files].filter(isImageFile);
+                if (!usable.length && fileInput.files.length) infoEl.textContent = "not an image this node can load (png, jpg, webp, bmp, gif)";
+                for (const file of usable) uploadFile(file);
                 fileInput.value = "";
             });
             document.body.appendChild(fileInput);
@@ -441,6 +470,9 @@ app.registerExtension({
                     h = box.h;
                     w = h * ratio;
                 }
+                // on a grid the pair is chosen like "Fit aspect" does, not by flooring each side alone
+                // (3:2 on a 64 grid would otherwise turn 640x427 into 640x384, 11% off the ratio)
+                if (snap() > 1) ({ w, h } = snapPair(ratio, snap(), box.w, box.h, w));
                 setBox(placeBox(center, w, h, full(), snap()));
             }
             const origLockCallback = lockWidget.callback;

@@ -1,5 +1,7 @@
 import { app } from "../../scripts/app.js";
 import {
+    IMAGE_ACCEPT,
+    IMAGE_EXTENSIONS,
     fetchListing,
     joinPath,
     naturalCompare,
@@ -10,10 +12,10 @@ import {
 } from "./bart_image_gallery.js";
 
 const NODE_NAME = "ImagePicker";
-const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|bmp|gif)$/i;
 
+// the extension decides (the server only lists and decodes these), not File.type
 function isImageFile(file) {
-    return file.type.startsWith("image/") || IMAGE_EXTENSIONS.test(file.name);
+    return IMAGE_EXTENSIONS.test(file.name);
 }
 
 // hide a widget without removing it: an unknown type is not drawn, its value still serializes
@@ -90,7 +92,7 @@ app.registerExtension({
             uploadRow.append(upload);
             const fileInput = document.createElement("input");
             fileInput.type = "file";
-            fileInput.accept = "image/*";
+            fileInput.accept = IMAGE_ACCEPT;
             fileInput.style.display = "none";
             box.append(previewBox, label, row, uploadRow, fileInput);
             node.addDOMWidget("image_picker_ui", "image_picker", box, { serialize: false, getMinHeight: () => 250 });
@@ -135,7 +137,13 @@ app.registerExtension({
             choose.addEventListener("click", openPicker);
             previewBox.addEventListener("click", openPicker);
 
-            async function step(direction) {
+            // Taps on ◀ / ▶ queue up: each step starts from where the previous one ended (a second tap
+            // while the first is still listing the folder would otherwise start from the same file).
+            let stepping = Promise.resolve();
+            function step(direction) {
+                stepping = stepping.then(() => stepOnce(direction));
+            }
+            async function stepOnce(direction) {
                 const { subfolder, filename } = splitPath(imageWidget.value || "");
                 try {
                     const data = await fetchListing(subfolder);
@@ -153,6 +161,12 @@ app.registerExtension({
             next.addEventListener("click", () => step(1));
 
             async function uploadFiles(files) {
+                files = files.filter(isImageFile);
+                if (!files.length) {
+                    placeholder.style.display = "";
+                    placeholder.textContent = "Not an image this node can load (png, jpg, webp, bmp, gif)";
+                    return;
+                }
                 const subfolder = splitPath(imageWidget.value || "").subfolder;
                 let last = "";
                 try {

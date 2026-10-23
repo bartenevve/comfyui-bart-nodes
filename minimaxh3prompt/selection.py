@@ -15,7 +15,9 @@ NUMERIC = {
     "duration": (8, 4, 120),
     "shots": (0, 0, 3),
     "seed": (0, 0, MAX_SEED),
-    "num_ctx": (8192, 1024, 131072),
+    # the kit's prompts alone take 1.6-3k tokens (more with retries): a smaller window makes Ollama
+    # cut the instructions off silently
+    "num_ctx": (8192, 4096, 131072),
     "num_predict": (0, 0, 32768),
     "retries": (2, 0, 5),
     "timeout": (600, 10, 3600),
@@ -26,6 +28,7 @@ NUMERIC = {
 FPS = 24
 SIZE_STEP = 32
 TEXT_FIELDS = ["request", "triggers", "dialogue", "text", "image", "start", "end", "refs"]
+MAX_TEXT = 20000  # characters per text field; the longest real request is a few hundred
 
 _CLIP_MARK = re.compile(r"^=== CLIP (\d+)(?: \((\d+) s\))? ===[ \t]*$", re.M)
 
@@ -35,15 +38,41 @@ class InputError(ValueError):
 
 
 def normalize_url(url):
-    """Base URL without a trailing slash; only http/https is accepted."""
+    """Base URL without a trailing slash; only http(s) with a host.
+
+    The request goes to `<url>/api/chat`, so the URL may carry a path prefix (Ollama behind a
+    reverse proxy) but nothing that could move the end of that path: a query or fragment
+    (`http://host/-/quit#` would otherwise POST to `/-/quit`), parameters, or credentials.
+    """
     if url is not None and not isinstance(url, str):
         # the Generate route takes this straight from JSON: a number or list must be a 400, not an AttributeError
         raise InputError(f"ollama_url must be text like http://host:11434, got: {url!r}")
     url = (url or "").strip()
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    try:
+        parsed = urllib.parse.urlparse(url)
+        _ = parsed.port  # raises ValueError for a port that is not a number
+    except ValueError:
+        raise InputError(f"ollama_url is not a valid URL: {url!r}") from None
+    if parsed.scheme not in ("http", "https") or not parsed.netloc or not parsed.hostname:
         raise InputError(f"ollama_url must be an http(s) URL like http://host:11434, got: {url!r}")
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        raise InputError("ollama_url must not contain credentials (user:password@host)")
+    if parsed.query or parsed.fragment or parsed.params or "?" in url or "#" in url or ";" in parsed.path:
+        raise InputError(f"ollama_url must be just the server address (no ?query, #fragment or ;params): {url!r}")
     return url.rstrip("/")
+
+
+def _as_bool(name, value, default):
+    """A JSON/widget boolean. Text is read as text ("false" is not truthy), anything odd is an error."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str) and value.strip().lower() in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+        return value.strip().lower() in ("true", "1", "yes", "on")
+    raise InputError(f"{name} must be true or false, got {value!r}")
 
 
 def coerce_options(values):
@@ -58,7 +87,7 @@ def coerce_options(values):
             raw = default
         try:
             number = int(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):  # OverflowError: JSON 1e999 / Infinity
             raise InputError(f"{name} must be an integer, got {raw!r}") from None
         if not low <= number <= high:
             raise InputError(f"{name} must be {low}..{high}, got {number}")
@@ -66,20 +95,24 @@ def coerce_options(values):
 
     try:
         out["temperature"] = float(values.get("temperature", 0.3))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise InputError("temperature must be a number") from None
     if not 0.0 <= out["temperature"] <= 2.0:
         raise InputError(f"temperature must be 0..2, got {out['temperature']}")
 
-    out["think"] = bool(values.get("think", False))
-    out["append_no_think"] = bool(values.get("append_no_think", True))
+    out["think"] = _as_bool("think", values.get("think"), False)
+    out["append_no_think"] = _as_bool("append_no_think", values.get("append_no_think"), True)
     out["ollama_url"] = normalize_url(values.get("ollama_url"))
     out["model"] = str(values.get("model") or "").strip()
     if not out["model"]:
         raise InputError("model is empty")
+    if len(out["model"]) > 300:
+        raise InputError("model name is too long")
 
     for name in TEXT_FIELDS:
         out[name] = str(values.get(name) or "")
+        if len(out[name]) > MAX_TEXT:
+            raise InputError(f"{name} is too long ({len(out[name])} characters, the limit is {MAX_TEXT})")
 
     for name, allowed, default in (("aspect", ASPECTS, "16:9"), ("mode", MODES, "T2VA"), ("variant", VARIANTS, "auto")):
         value = str(values.get(name) or default)

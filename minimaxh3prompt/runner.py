@@ -1,3 +1,4 @@
+import http.client
 import json
 import socket
 import urllib.error
@@ -5,9 +6,31 @@ import urllib.error
 from . import h3kit
 from .selection import InputError, coerce_options, format_report, join_clips
 
+# the variants that read the `refs` widget; the frontend hides it for every other one, so a
+# leftover line in it must neither be parsed nor block the run
+REF_VARIANTS = ("auto", "ref")
+
+EMPTY_ANSWER_HINT = (
+    "A thinking model (qwen3-vl, ...) may have spent its whole token budget reasoning: keep append_no_think on, "
+    "raise num_predict, or use a non-thinking model."
+)
+
 
 class H3Error(RuntimeError):
     """Ollama couldn't be reached / answered badly. InputError covers bad widget values."""
+
+
+def _blank(text):
+    return not (text or "").strip()
+
+
+def _error_detail(exc):
+    """Ollama's own message from an HTTP error body ({"error": "model not found"}), shortened."""
+    try:
+        detail = json.loads(exc.read(4096).decode("utf-8")).get("error", "")
+    except Exception:  # the body is the peer's: anything unreadable simply isn't shown
+        return ""
+    return detail[:200] if isinstance(detail, str) else ""
 
 
 def build_request(options):
@@ -16,7 +39,9 @@ def build_request(options):
     Cheap and pure, so `VALIDATE_INPUTS` can run it at queue time: a malformed
     `refs` line or dialogue is reported before any model is asked anything.
     """
-    refs = [line.strip() for line in options["refs"].splitlines() if line.strip()]
+    refs = []
+    if options["variant"] in REF_VARIANTS:
+        refs = [line.strip() for line in options["refs"].splitlines() if line.strip()]
     try:
         return h3kit.make_request(
             request=options["request"],
@@ -50,11 +75,13 @@ def generate(values):
         raise InputError("request is empty")
     req = build_request(options)
 
+    answers = []  # what the model itself wrote, before the kit repairs and pads it
+    server = options["ollama_url"]
     try:
         result = h3kit.generate(
             req,
             options["model"],
-            host=options["ollama_url"],
+            host=server,
             retries=options["retries"],
             think=options["think"],
             verbose=False,
@@ -63,23 +90,31 @@ def generate(values):
             num_predict=options["num_predict"] or None,
             timeout=options["timeout"],
             seed=options["seed"],
-            no_think=options["append_no_think"],
+            # `think` asks for the reasoning, so the switch that turns it off must not be sent
+            no_think=options["append_no_think"] and not options["think"],
+            on_answer=answers.append,
         )
     except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            detail = json.loads(exc.read().decode("utf-8")).get("error", "")
-        except Exception:
-            pass
-        raise H3Error(f"ollama answered HTTP {exc.code}: {detail or exc.reason}") from exc
+        raise H3Error(f"ollama answered HTTP {exc.code}: {_error_detail(exc) or exc.reason}") from exc
     except (socket.timeout, TimeoutError) as exc:
         raise H3Error(f"ollama did not answer within {options['timeout']}s") from exc
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, (socket.timeout, TimeoutError)):
             raise H3Error(f"ollama did not answer within {options['timeout']}s") from exc
-        raise H3Error(f"cannot reach ollama at {options['ollama_url']}: {exc.reason}") from exc
-    except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError) as exc:
-        raise H3Error(f"ollama at {options['ollama_url']} returned an unexpected response ({exc!r})") from exc
+        raise H3Error(f"cannot reach ollama at {server}: {exc.reason}") from exc
+    except (http.client.HTTPException, OSError) as exc:
+        # a server that hangs up mid-answer, or is not Ollama at all (an SSH banner, a half-open
+        # socket). Only the exception's class is reported: its text can be whatever the peer sent.
+        raise H3Error(f"the server at {server} dropped or garbled the connection ({type(exc).__name__})") from exc
+    except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
+        # not JSON, JSON of the wrong shape, a story plan without clips, ... never echoed: it may carry the body
+        if answers and all(_blank(answer) for answer in answers):
+            raise H3Error(f"model {options['model']!r} returned an empty answer. {EMPTY_ANSWER_HINT}") from exc
+        raise H3Error(f"the server at {server} returned an unusable answer ({type(exc).__name__})") from exc
+
+    if answers and all(_blank(answer) for answer in answers):
+        # the kit pads even an empty answer (an alignment line, a skeleton), so look at the raw text
+        raise H3Error(f"model {options['model']!r} returned an empty answer. {EMPTY_ANSWER_HINT}")
 
     errors = []
     warnings = [w for w in [result.get("warning")] if w]
@@ -97,10 +132,7 @@ def generate(values):
 
     clips = [clip.strip() for clip in clips]
     if not any(clips):
-        raise H3Error(
-            f"model {options['model']!r} returned an empty answer. A thinking model (qwen3-vl, ...) may have spent "
-            "its whole token budget reasoning: keep append_no_think on, raise num_predict, or use a non-thinking model."
-        )
+        raise H3Error(f"model {options['model']!r} returned an empty answer. {EMPTY_ANSWER_HINT}")
 
     return {
         "variant": result["variant"],

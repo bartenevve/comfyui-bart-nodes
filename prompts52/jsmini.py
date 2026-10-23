@@ -19,6 +19,10 @@ import re
 
 MAX_LOOP_ITERATIONS = 1_000_000  # across ALL loops of one run, nested ones included
 MAX_ARRAY_LENGTH = 1_000_000
+# A real generator builds prompts of a few hundred characters; a script that doubles a string in a loop
+# (s = s + s, forty times) would otherwise need a terabyte, with the process killed long before the
+# loop budget runs out.
+MAX_STRING_LENGTH = 2_000_000
 
 
 class JSError(RuntimeError):
@@ -566,6 +570,18 @@ def js_truthy(value):
     return True
 
 
+def _check_string(value):
+    if len(value) > MAX_STRING_LENGTH:
+        raise JSError(f"string longer than {MAX_STRING_LENGTH} characters")
+    return value
+
+
+def _check_array(items):
+    if len(items) > MAX_ARRAY_LENGTH:
+        raise JSError(f"array longer than {MAX_ARRAY_LENGTH} items")
+    return items
+
+
 def js_add(left, right):
     # arrays (and our objects) go through ToPrimitive first
     if isinstance(left, list):
@@ -573,7 +589,11 @@ def js_add(left, right):
     if isinstance(right, list):
         right = js_string(right)
     if isinstance(left, str) or isinstance(right, str):
-        return js_string(left) + js_string(right)
+        left, right = js_string(left), js_string(right)
+        # checked before the concatenation exists: a + b is only built when it fits
+        if len(left) + len(right) > MAX_STRING_LENGTH:
+            raise JSError(f"string longer than {MAX_STRING_LENGTH} characters")
+        return left + right
     return js_number(left) + js_number(right)
 
 
@@ -1156,7 +1176,10 @@ def _string_method(text, name, arguments):
     if name == "replace":
         return text.replace(js_string(first), js_string(arguments[1]), 1)
     if name == "concat":
-        return text + "".join(js_string(argument) for argument in arguments)
+        extra = [js_string(argument) for argument in arguments]
+        if len(text) + sum(len(piece) for piece in extra) > MAX_STRING_LENGTH:
+            raise JSError(f"string longer than {MAX_STRING_LENGTH} characters")
+        return text + "".join(extra)
     if name == "includes":
         return js_string(first) in text
     if name == "toString":
@@ -1168,14 +1191,14 @@ def _array_method(items, name, arguments):
     first = arguments[0] if arguments else UNDEFINED
     if name == "push":
         items.extend(arguments)
-        return float(len(items))
+        return float(len(_check_array(items)))
     if name == "pop":
         return items.pop() if items else UNDEFINED
     if name == "shift":
         return items.pop(0) if items else UNDEFINED
     if name == "unshift":
         items[:0] = arguments
-        return float(len(items))
+        return float(len(_check_array(items)))
     if name == "splice":
         start = _to_integer(first) if arguments else 0
         if start < 0:
@@ -1187,12 +1210,14 @@ def _array_method(items, name, arguments):
             count = max(_to_integer(arguments[1]), 0)
         removed = items[start : start + count]
         items[start : start + count] = list(arguments[2:])
+        _check_array(items)
         return removed
     if name == "join":
         separator = "," if not arguments or first is UNDEFINED else js_string(first)
-        return separator.join(
-            "" if item is UNDEFINED or item is None else js_string(item) for item in items
-        )
+        pieces = ["" if item is UNDEFINED or item is None else js_string(item) for item in items]
+        if sum(len(piece) for piece in pieces) + len(separator) * max(len(pieces) - 1, 0) > MAX_STRING_LENGTH:
+            raise JSError(f"string longer than {MAX_STRING_LENGTH} characters")
+        return separator.join(pieces)
     if name == "indexOf":
         for index, item in enumerate(items):
             if js_strict_equals(item, first):
@@ -1210,7 +1235,7 @@ def _array_method(items, name, arguments):
         result = list(items)
         for argument in arguments:
             result.extend(argument) if isinstance(argument, list) else result.append(argument)
-        return result
+        return _check_array(result)
     if name == "reverse":
         items.reverse()
         return items

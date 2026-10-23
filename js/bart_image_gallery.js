@@ -14,6 +14,9 @@ const PREFS_KEY = "bart_image_gallery_prefs";
 const TAP_GUARD_MS = 350; // taps this soon after opening are the opening gesture's echo
 const CHUNK = 120; // cells rendered per step; the rest are added as the user scrolls
 const THUMB_BUCKETS = [128, 192, 256, 384, 512]; // keep in step with the server's THUMB_SIZES
+// what the server lists, thumbnails and decodes (imagepicker/selection.py IMAGE_EXTENSIONS)
+export const IMAGE_ACCEPT = ".png,.jpg,.jpeg,.webp,.bmp,.gif";
+export const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|bmp|gif)$/i;
 
 export function thumbBucket(pixels) {
     return THUMB_BUCKETS.find((bucket) => bucket >= pixels) || THUMB_BUCKETS[THUMB_BUCKETS.length - 1];
@@ -106,7 +109,8 @@ const STYLE = `
 .bgal-grid{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:10px;
   display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--bgal-size,160px),1fr));grid-auto-rows:max-content;gap:10px;align-content:start}
 .bgal-cell{display:flex;flex-direction:column;gap:4px;padding:0;background:#262628;border:2px solid transparent;border-radius:10px;
-  color:inherit;cursor:pointer;text-align:center;touch-action:manipulation;-webkit-tap-highlight-color:transparent;overflow:hidden;font:inherit}
+  color:inherit;cursor:pointer;text-align:center;touch-action:manipulation;-webkit-tap-highlight-color:transparent;overflow:hidden;font:inherit;
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 .bgal-cell:active{background:#34343a}
 .bgal-cell.current{border-color:#4aa3ff}
 .bgal-thumb{position:relative;width:100%;height:0;padding-top:100%;background:#111;flex:0 0 auto}
@@ -137,10 +141,16 @@ function el(tag, className, text) {
  * Open the gallery. `current` is the selected path ("sub/name.png" or ""), `onSelect(path)`
  * gets the chosen one. Returns { close }.
  */
+let openGallery = null;
+
 export function openImageGallery({ current = "", title = "Choose an image", onSelect }) {
+    // a second press on the (still focused) button must not stack another gallery on the first
+    if (openGallery) openGallery.close();
     injectStyle();
-    const openedAt = performance.now();
-    const guarded = () => performance.now() - openedAt < TAP_GUARD_MS;
+    // Taps are ignored for a moment after the gallery opens AND after every folder change: the
+    // finger that opened it, or a double tap on a folder, must not land on whatever is drawn there next.
+    let guardFrom = performance.now();
+    const guarded = () => performance.now() - guardFrom < TAP_GUARD_MS;
 
     const prefs = loadPrefs();
     const state = {
@@ -171,7 +181,7 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
     uploadButton.type = "button";
     const fileInput = el("input");
     fileInput.type = "file";
-    fileInput.accept = "image/*";
+    fileInput.accept = IMAGE_ACCEPT;
     fileInput.multiple = true;
     fileInput.style.display = "none";
     const head = el("div", "bgal-head");
@@ -220,6 +230,7 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
     function close() {
         if (closed) return;
         closed = true;
+        if (openGallery && openGallery.close === close) openGallery = null;
         observer.disconnect();
         document.removeEventListener("keydown", onKey, true);
         overlay.remove();
@@ -265,8 +276,8 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
         if (item.kind === "folder") {
             cell.classList.add("bgal-folder");
             thumb.appendChild(el("div", "bgal-icon", "📁"));
-            cell.addEventListener("click", () => {
-                if (!guarded()) go(joinPath(state.subfolder, item.name));
+            cell.addEventListener("click", (event) => {
+                if (!guarded() && event.detail <= 1) go(joinPath(state.subfolder, item.name));
             });
         } else {
             const path = joinPath(state.subfolder, item.name);
@@ -284,8 +295,8 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
                 thumb.appendChild(el("div", "bgal-icon", "⚠️"));
             });
             thumb.appendChild(img);
-            cell.addEventListener("click", () => {
-                if (!guarded()) choose(path);
+            cell.addEventListener("click", (event) => {
+                if (!guarded() && event.detail <= 1) choose(path);
             });
         }
         cell.append(thumb, name);
@@ -358,6 +369,7 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
     let navigation = 0;
     async function go(subfolder) {
         const id = ++navigation;
+        guardFrom = performance.now();
         state.subfolder = subfolder;
         state.loading = true;
         renderCrumbs();
@@ -365,6 +377,7 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
         try {
             const data = await fetchListing(subfolder);
             if (id !== navigation || closed) return;
+            guardFrom = performance.now();
             state.folders = data.folders;
             state.files = data.files;
             state.truncated = !!data.truncated;
@@ -411,22 +424,30 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
 
     uploadButton.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", async () => {
-        const picked = [...fileInput.files];
+        const all = [...fileInput.files];
+        const picked = all.filter((file) => IMAGE_EXTENSIONS.test(file.name));
         fileInput.value = "";
-        if (!picked.length) return;
+        if (!picked.length) {
+            if (all.length) foot.textContent = "not an image this picker can load (png, jpg, webp, bmp, gif)";
+            return;
+        }
         foot.textContent = "Uploading " + picked.length + " file" + (picked.length === 1 ? "" : "s") + "…";
         const uploaded = [];
         try {
             for (const file of picked) uploaded.push(await uploadToInput(file, state.subfolder));
         } catch (e) {
-            foot.textContent = e.message;
+            if (!closed) foot.textContent = e.message;
             return;
         }
+        if (closed) return;  // closed (Esc, X) while the upload ran: nothing is selected behind the user's back
         if (uploaded.length === 1) choose(uploaded[0]);
         else go(state.subfolder);
     });
 
     document.body.appendChild(overlay);
+    panel.tabIndex = -1;
+    panel.focus({ preventScroll: true });  // so Enter on the button that opened it doesn't open another
+    openGallery = { close };
     go(state.subfolder);
     return { close };
 }

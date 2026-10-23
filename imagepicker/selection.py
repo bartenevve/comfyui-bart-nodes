@@ -24,7 +24,10 @@ def clean_subfolder(subfolder):
     text = (subfolder or "").replace("\\", "/").strip()
     if "\x00" in text:
         raise PathError("invalid subfolder")
-    if text.startswith("/") or (len(text) > 1 and text[1] == ":"):
+    if text.startswith("/"):
+        raise PathError("subfolder must be relative to the input folder")
+    # a drive letter ("C:/...") means something only on Windows; elsewhere "3:2 crops" is a normal folder name
+    if os.name == "nt" and len(text) > 1 and text[1] == ":":
         raise PathError("subfolder must be relative to the input folder")
     parts = [part for part in text.split("/") if part not in ("", ".")]
     if any(part == ".." for part in parts):
@@ -71,13 +74,12 @@ def is_image_name(name):
 def list_directory(base, subfolder):
     """One folder level: its subfolders and its image files (name, size, mtime).
 
-    Dotfiles and dot-folders are skipped. Order is case-insensitive by name;
-    the frontend re-sorts, but a stable default keeps the cap deterministic.
+    Dotfiles and dot-folders are skipped. Order is case-insensitive by name; when a
+    folder holds more than MAX_ENTRIES images the FIRST ones in that order are kept.
     """
     directory = join_inside(base, subfolder)
     folders = []
     files = []
-    truncated = False
     with os.scandir(directory) as entries:
         for entry in entries:
             if entry.name.startswith("."):
@@ -86,16 +88,15 @@ def list_directory(base, subfolder):
                 if entry.is_dir():
                     folders.append(entry.name)
                 elif entry.is_file() and is_image_name(entry.name):
-                    if len(files) >= MAX_ENTRIES:
-                        truncated = True
-                        continue
                     stat = entry.stat()
                     files.append({"name": entry.name, "size": stat.st_size, "mtime": stat.st_mtime})
             except OSError:
                 continue  # a broken symlink or a file that vanished mid-scan
     folders.sort(key=str.lower)
+    # sorted BEFORE the cut: scandir order is arbitrary, and which files survive a cap must not be
     files.sort(key=lambda item: item["name"].lower())
-    return {"subfolder": clean_subfolder(subfolder), "folders": folders, "files": files, "truncated": truncated}
+    truncated = len(files) > MAX_ENTRIES
+    return {"subfolder": clean_subfolder(subfolder), "folders": folders, "files": files[:MAX_ENTRIES], "truncated": truncated}
 
 
 def thumb_size(requested):

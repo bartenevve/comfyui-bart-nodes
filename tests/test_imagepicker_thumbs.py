@@ -60,6 +60,20 @@ class TestMakeThumb(unittest.TestCase):
         with self.Image.open(self.path("r.webp")) as thumb:
             self.assertEqual(thumb.size, (40, 60))
 
+    def test_an_image_over_the_pixel_limit_is_refused_before_it_is_decoded(self):
+        # a huge image costs width x height x 3 bytes to decode however small the file is
+        self.Image.new("RGB", (400, 300)).save(self.path("wide.png"))
+        original = self.thumbs.MAX_PIXELS
+        self.thumbs.MAX_PIXELS = 100_000  # 400 x 300 = 120,000
+        try:
+            with self.assertRaises(self.thumbs.ImageTooLarge) as caught:
+                self.thumbs.make_thumb(self.path("wide.png"), self.path("wide.webp"), 128)
+        finally:
+            self.thumbs.MAX_PIXELS = original
+        self.assertIn("megapixel", str(caught.exception))
+        self.assertFalse(os.path.exists(self.path("wide.webp")))
+        self.assertEqual(self.litter(), [])
+
     def test_no_temporary_files_are_left_behind(self):
         self.Image.new("RGB", (50, 50)).save(self.path("ok.png"))
         self.thumbs.make_thumb(self.path("ok.png"), self.path("ok.webp"), 128)

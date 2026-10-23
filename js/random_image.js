@@ -3,12 +3,11 @@ import { app } from "../../scripts/app.js";
 const NODE_NAME = "LoadRandomImage";
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|bmp|gif)$/i;
 
-// dropped File.type comes from the OS's MIME registration for the extension,
-// which is sometimes empty/wrong (older Windows + .webp is a known case) -
-// fall back to the extension itself so a genuinely supported image isn't
-// silently rejected
+// the extension decides, not File.type (the OS's MIME registration, sometimes
+// empty/wrong: older Windows + .webp), and only extensions the node can list
+// and decode count - a HEIC/AVIF file would upload and then never be listed
 function isImageFile(file) {
-    return file.type.startsWith("image/") || IMAGE_EXTENSIONS.test(file.name);
+    return IMAGE_EXTENSIONS.test(file.name);
 }
 
 app.registerExtension({

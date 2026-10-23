@@ -24,10 +24,23 @@ class TestCleanSubfolder(unittest.TestCase):
                 self.assertEqual(selection.clean_subfolder(raw), expected)
 
     def test_rejects_anything_that_could_leave_the_folder(self):
-        for bad in ("..", "../x", "a/../../x", "a/..", "/etc", "C:/Windows", "C:\\Windows", "a\x00b", "..\\x"):
+        for bad in ("..", "../x", "a/../../x", "a/..", "/etc", "a\x00b", "..\\x"):
             with self.subTest(raw=bad):
                 with self.assertRaises(selection.PathError):
                     selection.clean_subfolder(bad)
+
+    def test_a_drive_letter_is_refused_on_windows_only(self):
+        from unittest import mock
+
+        with mock.patch.object(selection.os, "name", "nt"):
+            for bad in ("C:/Windows", "C:\\Windows", "d:"):
+                with self.subTest(raw=bad):
+                    with self.assertRaises(selection.PathError):
+                        selection.clean_subfolder(bad)
+        # elsewhere a colon is an ordinary character: "3:2 crops" is a folder like any other
+        with mock.patch.object(selection.os, "name", "posix"):
+            self.assertEqual(selection.clean_subfolder("3:2 crops"), "3:2 crops")
+            self.assertEqual(selection.clean_subfolder("a/1:1"), "a/1:1")
 
 
 class TestCleanFilename(unittest.TestCase):
@@ -122,17 +135,29 @@ class TestListDirectory(unittest.TestCase):
         with self.assertRaises(selection.PathError):
             selection.list_directory(self.base, "..")
 
-    def test_cap_marks_truncated(self):
+    def test_cap_keeps_the_first_files_in_name_order(self):
         small = selection.MAX_ENTRIES
         selection.MAX_ENTRIES = 3
         try:
-            for index in range(6):
+            for index in (5, 3, 1, 4, 0, 2):  # created in a scrambled order: scandir order must not decide
                 touch(os.path.join(self.base, "many", f"{index}.png"))
             result = selection.list_directory(self.base, "many")
         finally:
             selection.MAX_ENTRIES = small
-        self.assertEqual(len(result["files"]), 3)
+        self.assertEqual([f["name"] for f in result["files"]], ["0.png", "1.png", "2.png"])
         self.assertTrue(result["truncated"])
+
+    def test_exactly_at_the_cap_is_not_truncated(self):
+        small = selection.MAX_ENTRIES
+        selection.MAX_ENTRIES = 3
+        try:
+            for index in range(3):
+                touch(os.path.join(self.base, "exact", f"{index}.png"))
+            result = selection.list_directory(self.base, "exact")
+        finally:
+            selection.MAX_ENTRIES = small
+        self.assertEqual(len(result["files"]), 3)
+        self.assertFalse(result["truncated"])
 
     def test_broken_symlink_is_skipped(self):
         os.symlink(os.path.join(self.base, "gone.png"), os.path.join(self.base, "dangling.png"))

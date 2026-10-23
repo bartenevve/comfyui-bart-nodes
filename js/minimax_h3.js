@@ -17,6 +17,10 @@ const CONTENT_WIDGETS = [
     "temperature", "num_ctx", "num_predict", "think", "append_no_think",
 ];
 const MAX_SEED = 0x7fffffff;
+// source nodes whose `value` widget is the value they output
+const PRIMITIVE_TYPES = new Set([
+    "PrimitiveNode", "PrimitiveInt", "PrimitiveFloat", "PrimitiveString", "PrimitiveStringMultiline", "PrimitiveBoolean",
+]);
 
 // Same trick as the 52prompts node: an unknown widget type is how LiteGraph
 // hides a widget without removing it, so its value still serializes.
@@ -105,23 +109,35 @@ app.registerExtension({
 
             // A widget fed by a link (converted to an input) keeps a stale value of its
             // own. The button runs outside the graph, so it can only know what a
-            // Primitive-style source node holds in its widget; anything else
-            // (another node's computed output) is unknowable until the graph runs.
+            // Primitive node holds in its widget (the frontend's own, or core's PrimitiveInt /
+            // PrimitiveString / ...), followed through any Reroutes; anything else (another
+            // node's computed output - even one with a single widget) is unknowable until the
+            // graph runs.
             function linkedValue(name) {
                 const input = (node.inputs || []).find((i) => i.widget && i.widget.name === name);
                 if (!input || input.link == null) return { linked: false };
-                const links = app.graph.links;
-                const link = links && (links.get ? links.get(input.link) : links[input.link]);
-                const origin = link && app.graph.getNodeById(link.origin_id);
-                if (!origin) return { linked: true, known: false, from: "?" };
-                const sourceWidgets = origin.widgets || [];
-                const source =
-                    sourceWidgets.find((w) => w.name === "value") ||
-                    (sourceWidgets.length === 1 ? sourceWidgets[0] : null);
-                if (source && source.value !== undefined) {
-                    return { linked: true, known: true, value: source.value };
+                const graph = node.graph || app.graph;
+                let linkId = input.link;
+                for (let hops = 0; hops < 16; hops++) {
+                    const links = graph.links;
+                    const link = links && (links.get ? links.get(linkId) : links[linkId]);
+                    const origin = link && graph.getNodeById(link.origin_id);
+                    if (!origin) return { linked: true, known: false, from: "?" };
+                    if (origin.type === "Reroute") {
+                        const next = origin.inputs && origin.inputs[0] && origin.inputs[0].link;
+                        if (next == null) return { linked: true, known: false, from: "Reroute" };
+                        linkId = next;
+                        continue;
+                    }
+                    if (PRIMITIVE_TYPES.has(origin.type) && link.origin_slot === 0) {
+                        const source = (origin.widgets || []).find((w) => w.name === "value");
+                        if (source && source.value !== undefined) {
+                            return { linked: true, known: true, value: source.value };
+                        }
+                    }
+                    return { linked: true, known: false, from: origin.title || origin.type };
                 }
-                return { linked: true, known: false, from: origin.title || origin.type };
+                return { linked: true, known: false, from: "Reroute chain" };
             }
 
             function effectiveValue(name) {
@@ -164,6 +180,9 @@ app.registerExtension({
                 }
                 busy = true;
                 note = "generating - the model can take a minute…";
+                // the key goes with what is sent: edits made while the model is thinking must still
+                // show up as "inputs changed" when the answer lands
+                const sentKey = snapshotKey();
                 // a fresh seed on every press is what makes Regenerate give a different take
                 // (a linked seed can't be changed from here: it is sent as it is)
                 if (!linkedValue("seed").linked) {
@@ -182,8 +201,9 @@ app.registerExtension({
                         note = "error: " + (data.error || resp.status);
                     } else {
                         generatedWidget.value = data.generated;
-                        keyWidget.value = snapshotKey();
-                        note = data.report + "\nseed " + data.seed;
+                        keyWidget.value = sentKey;
+                        note = data.report + "\nseed " + data.seed +
+                            (linkedValue("seed").linked ? " (linked: Regenerate repeats the same take)" : "");
                     }
                 } catch (e) {
                     console.error("minimax_h3 generate failed:", e);
@@ -214,7 +234,7 @@ app.registerExtension({
                     const widget = byName(name);
                     if (widget) setWidgetHidden(widget, !visible);
                 }
-                node.setSize([node.size[0], node.computeSize()[1]]);
+                node.setSize([node.size[0], Math.max(node.size[1], node.computeSize()[1])]);
             }
 
             for (const name of CONTENT_WIDGETS) {
@@ -250,6 +270,17 @@ app.registerExtension({
                 render();
             };
             node.minimaxH3SnapshotKey = snapshotKey;
+            // the key for a graph run is built from what the server says it used, not from the widgets
+            // as they are when the answer arrives (they may have been edited since the run was queued)
+            node.minimaxH3KeyFromUsed = (used) => {
+                const snapshot = CONTENT_WIDGETS.map((name) => {
+                    const v = effectiveValue(name);
+                    if (!v.present) return null;
+                    if (v.unknown) return "linked:" + v.unknown;
+                    return used && name in used ? used[name] : v.value;
+                });
+                return hashString(JSON.stringify(snapshot));
+            };
 
             node.setSize([Math.max(node.size[0], 420), node.size[1]]);
             applyMode();
@@ -269,7 +300,13 @@ app.registerExtension({
                 const generatedWidget = byName("generated");
                 const keyWidget = byName("generated_key");
                 if (generatedWidget) generatedWidget.value = generated;
-                if (keyWidget) keyWidget.value = this.minimaxH3SnapshotKey();
+                let used = null;
+                try {
+                    used = message.used && JSON.parse(message.used[0]);
+                } catch (e) {
+                    used = null;
+                }
+                if (keyWidget) keyWidget.value = used ? this.minimaxH3KeyFromUsed(used) : this.minimaxH3SnapshotKey();
             }
             this.minimaxH3SetNote(message.report && message.report[0]);
         };
@@ -278,6 +315,15 @@ app.registerExtension({
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             const result = onConfigure ? onConfigure.apply(this, arguments) : undefined;
+            if (this.minimaxH3Refresh) this.minimaxH3Refresh();
+            return result;
+        };
+
+        // a legacy Primitive node builds its `value` widget only once the whole graph is configured:
+        // until then a linked input looks unknowable and the "inputs changed" hint would show wrongly
+        const onAfterGraphConfigured = nodeType.prototype.onAfterGraphConfigured;
+        nodeType.prototype.onAfterGraphConfigured = function () {
+            const result = onAfterGraphConfigured ? onAfterGraphConfigured.apply(this, arguments) : undefined;
             if (this.minimaxH3Refresh) this.minimaxH3Refresh();
             return result;
         };

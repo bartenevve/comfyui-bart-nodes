@@ -24,6 +24,21 @@ class TestNormalizeUrl(unittest.TestCase):
                 with self.assertRaises(selection.InputError):
                     selection.coerce_options({**VALID, "ollama_url": bad})
 
+    def test_the_address_keeps_a_path_prefix_but_nothing_that_could_move_the_end_of_the_path(self):
+        # the request goes to <url>/api/chat: "http://host/-/quit#" would otherwise POST to /-/quit
+        self.assertEqual(selection.normalize_url("https://example.com/ollama/"), "https://example.com/ollama")
+        self.assertEqual(selection.normalize_url("http://[::1]:11434"), "http://[::1]:11434")
+        for bad in ("http://10.0.0.5:9090/-/quit#", "http://host/x?y=1", "http://host/x#frag", "http://host:11434?", "http://host/a;b"):
+            with self.subTest(url=bad):
+                with self.assertRaises(selection.InputError):
+                    selection.normalize_url(bad)
+
+    def test_credentials_and_broken_ports_are_refused(self):
+        for bad in ("http://user:pass@host:11434", "http://user@host", "http://localhost:11434x", "http://[::1", "http://h:99999", "http://h:-1"):
+            with self.subTest(url=bad):
+                with self.assertRaises(selection.InputError):
+                    selection.normalize_url(bad)
+
     def test_rejects_other_schemes_and_garbage(self):
         for bad in ("", None, "host:11434", "file:///etc/passwd", "ftp://host", "http://", "javascript:alert(1)"):
             with self.subTest(url=bad):
@@ -41,6 +56,39 @@ class TestCoerceOptions(unittest.TestCase):
         self.assertEqual(options["temperature"], 0.3)
         self.assertFalse(options["think"])
         self.assertEqual(options["refs"], "")
+
+    def test_infinity_and_huge_numbers_are_input_errors_not_overflow_errors(self):
+        for field in ("duration", "seed", "num_ctx", "timeout"):
+            for value in (float("inf"), 1e999, float("-inf")):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(selection.InputError):
+                        selection.coerce_options({**VALID, field: value})
+        with self.assertRaises(selection.InputError):
+            selection.coerce_options({**VALID, "temperature": 1e999})
+
+    def test_booleans_are_read_as_booleans(self):
+        # bool("false") is True: text must be read as text
+        for text, expected in (("false", False), ("true", True), ("0", False), ("1", True), ("No", False), ("on", True)):
+            self.assertEqual(selection.coerce_options({**VALID, "think": text})["think"], expected, text)
+        self.assertEqual(selection.coerce_options({**VALID, "think": 0})["think"], False)
+        self.assertEqual(selection.coerce_options({**VALID, "append_no_think": None})["append_no_think"], True)
+        for bad in ("maybe", 2, [True], {"a": 1}):
+            with self.subTest(value=bad):
+                with self.assertRaises(selection.InputError):
+                    selection.coerce_options({**VALID, "think": bad})
+
+    def test_text_fields_have_a_length_limit(self):
+        with self.assertRaises(selection.InputError) as caught:
+            selection.coerce_options({**VALID, "request": "x" * (selection.MAX_TEXT + 1)})
+        self.assertIn("request is too long", str(caught.exception))
+        selection.coerce_options({**VALID, "request": "x" * selection.MAX_TEXT})
+        with self.assertRaises(selection.InputError):
+            selection.coerce_options({**VALID, "model": "m" * 301})
+
+    def test_the_context_window_cannot_be_smaller_than_the_kits_own_prompt(self):
+        with self.assertRaises(selection.InputError):
+            selection.coerce_options({**VALID, "num_ctx": 2048})
+        self.assertEqual(selection.coerce_options({**VALID, "num_ctx": 4096})["num_ctx"], 4096)
 
     def test_json_strings_are_coerced(self):
         options = selection.coerce_options({**VALID, "duration": "10", "seed": "42", "temperature": "0.5"})

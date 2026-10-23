@@ -293,14 +293,26 @@ def strip_think(t):
     return t
 
 
+MAX_ANSWER_CHARS = 200_000
+
+
+def squeeze(t):
+    """Bound the work of the repair regexes below: a model stuck in a loop can answer with
+    thousands of newlines or blanks, which they would chew through slowly while holding the
+    GIL. Runs are shortened (two newlines still separate paragraphs); nothing else changes."""
+    t = t[:MAX_ANSWER_CHARS]
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return re.sub(r"[ \t]{3,}", "  ", t)
+
+
 def autofix(text, req):
     """Cheap deterministic repairs. Returns (text, list_of_fixes)."""
     fixes = []
-    t = strip_think(text)
+    t = squeeze(strip_think(text))
     t = re.sub(r"```[a-z]*", "", t)
     # markdown around field names
     for f in FIELDS:
-        t2 = re.sub(r"[*_#>\s]*\**" + f + r"\**\s*\**\s*:\s*\**", "\n\n" + f + ": ", t)
+        t2 = re.sub(r"[*_#>\s]*" + f + r"[\s*]*:[\s*]*", "\n\n" + f + ": ", t)
         if t2 != t:
             t = t2
     # drop chatter before first field and any picture line written by the model
@@ -351,7 +363,7 @@ def autofix(text, req):
         t = re.sub(r"</d>[.,]", "</d>", t)
         fixes.append("removed punctuation after </d>")
     # forbidden camera modifiers
-    bad_speed = r"\s*,?\s*at (?:a |an )?(?:moderate|medium|normal|steady|gentle|constant|leisurely|smooth|steady|even|controlled)\s+(?:speed|pace)"
+    bad_speed = r"(?:\s*,)?\s*at (?:a |an )?(?:moderate|medium|normal|steady|gentle|constant|leisurely|smooth|steady|even|controlled)\s+(?:speed|pace)"
     if re.search(bad_speed, t, flags=re.I):
         t = re.sub(bad_speed, "", t, flags=re.I)
         fixes.append("removed non-standard speed")
@@ -886,7 +898,7 @@ def _ref_parts(t):
     names = ["summary", "detailed_description", "overall_soundscape", "non_diegetic_music"]
     out = {}
     for f in names:
-        m = re.search(r"(?:^|\n)\s*[*#]*\s*" + f + r"\s*[*]*\s*:\s*(.*?)(?=\n\s*[*#]*\s*(?:" + "|".join(REF_FIELDS) + r")\s*[*]*\s*:|$)", t, flags=re.S)
+        m = re.search(r"(?:^|\n)[\s*#]*" + f + r"[\s*]*:\s*(.*?)(?=\n[\s*#]*(?:" + "|".join(REF_FIELDS) + r")[\s*]*:|$)", t, flags=re.S)
         if m:
             out[f] = re.sub(r"\s+", " ", m.group(1)).strip()
     return out
@@ -895,7 +907,7 @@ def _ref_parts(t):
 def autofix_ref(text, req):
     fixes = []
     ctx = ref_context(req)
-    t = strip_think(text).replace("```", "")
+    t = squeeze(strip_think(text)).replace("```", "")
     t2 = re.sub(r"<\s*(subject|picture|video|audio)\s+(\d+)\s*>", lambda m: f"<{m.group(1).capitalize()} {m.group(2)}>", t, flags=re.I)
     t2 = re.sub(r"(?<![<\w])(Subject|Picture|Video|Audio) (\d+)(?![>\d])", r"<\1 \2>", t2)
     if t2 != t:
@@ -1019,8 +1031,22 @@ def validate_ref(text, req):
 
 # ----------------------------------------------------------------- ollama ----
 
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # an answer is a few KB; a server that never stops sending must not fill memory
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """An Ollama server never redirects. Following one would turn the POST into a GET somewhere else."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def ollama_chat(messages, model, host="http://localhost:11434", think=False, fmt=None,
-                temperature=0.3, num_ctx=8192, num_predict=None, timeout=1800, seed=None, no_think=False):
+                temperature=0.3, num_ctx=8192, num_predict=None, timeout=1800, seed=None, no_think=False,
+                on_answer=None):
     if no_think and messages and messages[-1]["role"] == "user":
         # Qwen3's soft switch: thinking models such as qwen3-vl ignore think=false
         # and can burn the whole token budget before writing an answer
@@ -1037,8 +1063,14 @@ def ollama_chat(messages, model, host="http://localhost:11434", think=False, fmt
         body["format"] = fmt
     rq = urllib.request.Request(host.rstrip("/") + "/api/chat", data=json.dumps(body).encode(),
                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(rq, timeout=timeout) as r:
-        return json.loads(r.read())["message"]["content"]
+    with _OPENER.open(rq, timeout=timeout) as r:
+        raw = r.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError("response from the server is larger than %d bytes" % MAX_RESPONSE_BYTES)
+    content = json.loads(raw)["message"]["content"]
+    if on_answer is not None:  # lets a caller see the model's own text, before any repair pads it
+        on_answer(content)
+    return content
 
 
 def generate(req, model, host="http://localhost:11434", retries=2, think=False, verbose=True, **kw):

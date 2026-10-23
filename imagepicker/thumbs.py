@@ -7,6 +7,15 @@ from PIL import Image
 from .. import imageload
 
 
+# A decoded image costs width x height x 3-4 bytes whatever its file size (a 150-megapixel all-black PNG
+# is a few hundred KB on disk and about a gigabyte in memory), and the gallery asks for many at once.
+MAX_PIXELS = 64_000_000
+
+
+class ImageTooLarge(ValueError):
+    pass
+
+
 def make_thumb(source, target, size):
     """Write a WebP thumbnail of `source` (first frame, EXIF-rotated, at most size x size) to `target`.
 
@@ -18,6 +27,8 @@ def make_thumb(source, target, size):
     temporary = f"{target}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}.part"
     try:
         with imageload.open_image(source) as img:
+            if img.width * img.height > MAX_PIXELS:
+                raise ImageTooLarge(f"{img.width}x{img.height} is over the {MAX_PIXELS // 1_000_000} megapixel preview limit")
             if img.format == "JPEG":
                 img.draft("RGB", (size * 2, size * 2))  # decode at reduced scale: much faster for big photos
             img = imageload.eight_bit(imageload.upright(img))

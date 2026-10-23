@@ -326,5 +326,44 @@ class TestFailureModes(unittest.TestCase):
             jsmini.MAX_LOOP_ITERATIONS = original
 
 
+class TestGrowthLimits(unittest.TestCase):
+    """A hostile or rewritten remote script must hit an error, not take the whole ComfyUI process down."""
+
+    def run_js(self, source):
+        return jsmini.run_script(source)
+
+    def test_doubling_a_string_in_a_loop_stops_at_the_limit(self):
+        with self.assertRaises(jsmini.JSError) as caught:
+            self.run_js("var s = 'x'; for (var i = 0; i < 60; i++) { s = s + s; }")
+        self.assertIn("string longer than", str(caught.exception))
+
+    def test_concat_and_join_are_limited_too(self):
+        for source in (
+            "var s = 'x'; for (var i = 0; i < 60; i++) { s = s.concat(s); }",
+            "var a = []; for (var i = 0; i < 900000; i++) { a.push('abcdefghij'); } var s = a.join('');",
+            "var s = 'x'; for (var i = 0; i < 60; i++) { s = [s, s].join(''); }",
+        ):
+            with self.subTest(source=source[:50]):
+                with self.assertRaises(jsmini.JSError):
+                    self.run_js(source)
+
+    def test_doubling_an_array_stops_at_the_limit(self):
+        for source in (
+            "var a = [1]; for (var i = 0; i < 60; i++) { a = a.concat(a); }",
+            "var a = [1]; for (var i = 0; i < 60; i++) { a = a.concat(a, a); }",
+        ):
+            with self.subTest(source=source[:50]):
+                with self.assertRaises(jsmini.JSError):
+                    self.run_js(source)
+
+    def test_ordinary_sizes_are_untouched(self):
+        out = self.run_js(
+            "var s = ''; for (var i = 0; i < 1000; i++) { s = s + 'word '; }"
+            "var a = []; for (var j = 0; j < 5000; j++) { a.push('x'); }"
+            "document.getElementById('promptDisplay').innerHTML = s.length + ':' + a.join('').length;"
+        )
+        self.assertEqual(out, "5000:5000")
+
+
 if __name__ == "__main__":
     unittest.main()

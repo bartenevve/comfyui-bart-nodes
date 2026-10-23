@@ -8,7 +8,7 @@ from aiohttp import web
 from server import PromptServer
 
 from .selection import PathError, clean_subfolder, is_image_name, join_inside, list_directory, thumb_cache_name, thumb_size
-from .thumbs import make_thumb
+from .thumbs import ImageTooLarge, make_thumb
 
 
 async def _run(func, *args, **kwargs):
@@ -16,6 +16,11 @@ async def _run(func, *args, **kwargs):
     thumbnail decode must not stall every other ComfyUI request)."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
+
+
+# At most this many images are decoded at once, however many thumbnails the gallery (or anyone else) asks
+# for: each decode can take hundreds of MB, and the pool behind run_in_executor is shared with the rest of ComfyUI.
+_THUMB_SLOTS = asyncio.Semaphore(3)
 
 
 def _thumb_dir():
@@ -63,7 +68,12 @@ async def thumbnail(request):
     target = os.path.join(_thumb_dir(), thumb_cache_name(relative, stat.st_mtime_ns, stat.st_size, size))
     if not os.path.isfile(target):
         try:
-            await _run(make_thumb, source, target, size)
+            async with _THUMB_SLOTS:
+                await _run(make_thumb, source, target, size)
+        except ImageTooLarge as exc:
+            return web.json_response({"error": str(exc)}, status=413)
         except Exception as exc:  # corrupt / unsupported file: the gallery shows a placeholder
             return web.json_response({"error": f"cannot read image: {type(exc).__name__}"}, status=415)
-    return web.FileResponse(target, headers={"Cache-Control": "private, max-age=3600"})
+    # no-cache = "ask again before reusing": an overwritten file keeps its URL, and a stale thumbnail
+    # (up to an hour, with a max-age) would show the old picture; the answer is a cheap 304 when nothing changed
+    return web.FileResponse(target, headers={"Cache-Control": "private, no-cache"})
