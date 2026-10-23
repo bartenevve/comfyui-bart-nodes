@@ -3,7 +3,7 @@ import json
 import socket
 import urllib.error
 
-from . import h3kit
+from . import clipchat, h3kit
 from .selection import InputError, coerce_options, format_report, join_clips
 
 # the variants that read the `refs` widget; the frontend hides it for every other one, so a
@@ -13,6 +13,10 @@ REF_VARIANTS = ("auto", "ref")
 EMPTY_ANSWER_HINT = (
     "A thinking model (qwen3-vl, ...) may have spent its whole token budget reasoning: keep append_no_think on, "
     "raise num_predict, or use a non-thinking model."
+)
+CLIP_EMPTY_ANSWER_HINT = (
+    "A thinking model may have spent its whole token budget reasoning: leave think off, raise num_predict, "
+    "or use a non-thinking model."
 )
 
 
@@ -62,18 +66,30 @@ def build_request(options):
         raise InputError(str(exc)) from None
 
 
-def generate(values):
-    """Run the kit against Ollama. Returns {variant, clips, text, errors, warnings, report}.
+def generate(values, clip=None):
+    """Run the kit against Ollama, or against `clip` (a text-LLM CLIP of the running graph) when
+    one is given. Returns {variant, clips, text, errors, warnings, report}.
 
     `text` is the saved-text form (clips joined with marker lines when there is
     more than one). Validator errors that survive the kit's retries do NOT
     raise: the best attempt is returned and the errors go in the report, since
     a prompt that is 95% right is still more useful to edit than an exception.
     """
-    options = coerce_options(values)
+    options = coerce_options(values, server=clip is None)
     if not options["request"].strip():
         raise InputError("request is empty")
     req = build_request(options)
+
+    chat = None
+    who, hint = f"model {options['model']!r}", EMPTY_ANSWER_HINT
+    if clip is not None:
+        if h3kit.route(req) == "slots":
+            raise InputError("variant slots needs Ollama (it relies on constrained JSON decoding): unlink the clip input")
+        try:
+            chat = clipchat.make_chat(clip)
+        except clipchat.ClipError as exc:
+            raise H3Error(str(exc)) from None
+        who, hint = "the CLIP model", CLIP_EMPTY_ANSWER_HINT
 
     answers = []  # what the model itself wrote, before the kit repairs and pads it
     server = options["ollama_url"]
@@ -81,6 +97,7 @@ def generate(values):
         result = h3kit.generate(
             req,
             options["model"],
+            chat=chat,
             host=server,
             retries=options["retries"],
             think=options["think"],
@@ -94,6 +111,8 @@ def generate(values):
             no_think=options["append_no_think"] and not options["think"],
             on_answer=answers.append,
         )
+    except clipchat.ClipError as exc:
+        raise H3Error(str(exc)) from exc
     except urllib.error.HTTPError as exc:
         raise H3Error(f"ollama answered HTTP {exc.code}: {_error_detail(exc) or exc.reason}") from exc
     except (socket.timeout, TimeoutError) as exc:
@@ -109,12 +128,13 @@ def generate(values):
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
         # not JSON, JSON of the wrong shape, a story plan without clips, ... never echoed: it may carry the body
         if answers and all(_blank(answer) for answer in answers):
-            raise H3Error(f"model {options['model']!r} returned an empty answer. {EMPTY_ANSWER_HINT}") from exc
-        raise H3Error(f"the server at {server} returned an unusable answer ({type(exc).__name__})") from exc
+            raise H3Error(f"{who} returned an empty answer. {hint}") from exc
+        origin = "the CLIP model" if clip is not None else f"the server at {server}"
+        raise H3Error(f"{origin} returned an unusable answer ({type(exc).__name__})") from exc
 
     if answers and all(_blank(answer) for answer in answers):
         # the kit pads even an empty answer (an alignment line, a skeleton), so look at the raw text
-        raise H3Error(f"model {options['model']!r} returned an empty answer. {EMPTY_ANSWER_HINT}")
+        raise H3Error(f"{who} returned an empty answer. {hint}")
 
     errors = []
     warnings = [w for w in [result.get("warning")] if w]
@@ -132,7 +152,7 @@ def generate(values):
 
     clips = [clip.strip() for clip in clips]
     if not any(clips):
-        raise H3Error(f"model {options['model']!r} returned an empty answer. {EMPTY_ANSWER_HINT}")
+        raise H3Error(f"{who} returned an empty answer. {hint}")
 
     return {
         "variant": result["variant"],

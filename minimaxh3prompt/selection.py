@@ -75,10 +75,11 @@ def _as_bool(name, value, default):
     raise InputError(f"{name} must be true or false, got {value!r}")
 
 
-def coerce_options(values):
+def coerce_options(values, server=True):
     """Clean, typed copy of the widget values (`values` may come from JSON).
 
-    Raises InputError naming the offending field.
+    `server=False` is the CLIP backend: there is no Ollama, so `ollama_url` and `model` are not
+    looked at (they stay empty). Raises InputError naming the offending field.
     """
     out = {}
     for name, (default, low, high) in NUMERIC.items():
@@ -102,12 +103,15 @@ def coerce_options(values):
 
     out["think"] = _as_bool("think", values.get("think"), False)
     out["append_no_think"] = _as_bool("append_no_think", values.get("append_no_think"), True)
-    out["ollama_url"] = normalize_url(values.get("ollama_url"))
-    out["model"] = str(values.get("model") or "").strip()
-    if not out["model"]:
-        raise InputError("model is empty")
-    if len(out["model"]) > 300:
-        raise InputError("model name is too long")
+    if server:
+        out["ollama_url"] = normalize_url(values.get("ollama_url"))
+        out["model"] = str(values.get("model") or "").strip()
+        if not out["model"]:
+            raise InputError("model is empty")
+        if len(out["model"]) > 300:
+            raise InputError("model name is too long")
+    else:
+        out["ollama_url"] = out["model"] = ""
 
     for name in TEXT_FIELDS:
         out[name] = str(values.get(name) or "")

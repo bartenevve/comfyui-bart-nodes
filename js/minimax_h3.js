@@ -96,10 +96,21 @@ app.registerExtension({
             let note = ""; // last report / error, shown under the button
             const button = node.addWidget("button", "✨ Generate", null, () => generate());
 
+            // A CLIP is a live object of the running graph: it can't be sent to the server route, so with
+            // one linked the text is written when the graph runs, and the button only clears the old text.
+            function clipLinked() {
+                const input = (node.inputs || []).find((i) => i.name === "clip");
+                return !!input && input.link != null;
+            }
+
             function render() {
                 const hasText = !!(generatedWidget.value || "").trim();
                 const stale = hasText && keyWidget.value && keyWidget.value !== snapshotKey();
-                button.name = busy ? "⏳ Generating…" : hasText ? "🔄 Regenerate" : "✨ Generate";
+                if (clipLinked()) {
+                    button.name = hasText ? "🗑 Clear (rewritten on run)" : "▶ Written when the graph runs";
+                } else {
+                    button.name = busy ? "⏳ Generating…" : hasText ? "🔄 Regenerate" : "✨ Generate";
+                }
                 const hint = stale
                     ? "⚠ inputs changed since this text was generated - it is kept as is; press Regenerate to redo it"
                     : "";
@@ -171,6 +182,18 @@ app.registerExtension({
 
             async function generate() {
                 if (busy) return;
+                if (clipLinked()) {
+                    if ((generatedWidget.value || "").trim()) {
+                        generatedWidget.value = "";
+                        keyWidget.value = "";
+                        if (!linkedValue("seed").linked) seedWidget.value = 1 + Math.floor(Math.random() * (MAX_SEED - 1));
+                        note = "text cleared: run the graph and the linked CLIP writes a new take (new seed)";
+                    } else {
+                        note = "a CLIP is linked: run the graph, it writes the text (ollama_url and model are ignored)";
+                    }
+                    render();
+                    return;
+                }
                 const { values, unknown } = collectValues();
                 if (unknown.length) {
                     note = "error: linked to a node whose value is only known when the graph runs: " +

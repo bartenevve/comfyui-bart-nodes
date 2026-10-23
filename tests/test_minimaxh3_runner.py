@@ -479,7 +479,7 @@ class TestValidateInputs(unittest.TestCase):
         import inspect
 
         parameters = set(inspect.signature(nodes.MiniMaxH3Prompt.VALIDATE_INPUTS).parameters)
-        self.assertEqual(parameters, {"generated", "ollama_url", "model", "request", "refs", "variant"})
+        self.assertEqual(parameters, {"generated", "ollama_url", "model", "request", "refs", "variant", "input_types"})
         for numeric in ("duration", "seed", "num_ctx", "short_side", "aspect", "mode"):
             self.assertNotIn(numeric, parameters)
 

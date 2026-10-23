@@ -74,6 +74,10 @@ class MiniMaxH3Prompt:
                 # last on purpose: widgets_values are positional, so appending
                 # keeps workflows saved before this widget existed loading right
                 "short_side": number("short_side"),
+                # a text-LLM CLIP (Load CLIP with a Qwen / Gemma model) writes the text inside ComfyUI instead
+                # of Ollama; a socket, not a widget, so it sits last without moving any saved value
+                "clip": ("CLIP", {"tooltip": "Optional: write the prompt with this text-LLM encoder instead of Ollama "
+                                             "(only when the graph runs; ollama_url and model are then ignored)"}),
             },
         }
 
@@ -98,6 +102,7 @@ class MiniMaxH3Prompt:
             frames = [d * FPS for d in durations]
             return (clips, report, durations, frames, width, height, seed)
 
+        clip = optional.pop("clip", None)
         timed = split_timed_clips(generated)
         if timed:
             # saved text wins, including hand edits; the Generate button is the
@@ -111,7 +116,7 @@ class MiniMaxH3Prompt:
             mode=mode, variant=variant, seed=seed, **optional,
         )
         try:
-            result = runner.generate(values)
+            result = runner.generate(values, clip=clip)
         except (InputError, runner.H3Error) as exc:
             raise RuntimeError(f"MiniMax H3 prompt: {exc}") from None
         used = {name: values.get(name) for name in CONTENT_WIDGETS}
@@ -131,12 +136,16 @@ class MiniMaxH3Prompt:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @classmethod
-    def VALIDATE_INPUTS(cls, generated=None, ollama_url=None, model=None, request=None, refs=None, variant=None):
+    def VALIDATE_INPUTS(cls, generated=None, ollama_url=None, model=None, request=None, refs=None, variant=None,
+                        input_types=None):
         # Only the inputs that need a check of their own are named: a catch-all (**inputs) would make
         # ComfyUI skip its own type/range/combo validation for every other input too, and name each
         # of the 26 in the error. None = wired from another node, unknowable here.
         if generated is None or generated.strip():
             return True  # saved text is output as it is: nothing below is used
+        use_clip = "clip" in (input_types or {})  # the CLIP is linked: no Ollama involved
+        if use_clip and variant == "slots":
+            return "variant slots needs Ollama (it relies on constrained JSON decoding): unlink the clip input"
         values = {
             "ollama_url": ollama_url if ollama_url is not None else "http://localhost:11434",
             "model": model if model is not None else "-",
@@ -145,7 +154,7 @@ class MiniMaxH3Prompt:
             "variant": variant or "auto",
         }
         try:
-            options = runner.coerce_options(values)
+            options = runner.coerce_options(values, server=not use_clip)
             if not options["request"].strip():
                 return "request is empty (type a request, or press Generate and keep the saved text)"
             runner.build_request(options)

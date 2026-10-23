@@ -1073,16 +1073,18 @@ def ollama_chat(messages, model, host="http://localhost:11434", think=False, fmt
     return content
 
 
-def generate(req, model, host="http://localhost:11434", retries=2, think=False, verbose=True, **kw):
+def generate(req, model, host="http://localhost:11434", retries=2, think=False, verbose=True, chat=None, **kw):
+    # `chat` replaces ollama_chat (same call shape): lets another backend write the text
+    chat = chat or ollama_chat
     variant = route(req)
     if variant == "story":
-        return generate_story(req, model, host, retries, think, verbose, **kw)
+        return generate_story(req, model, host, retries, think, verbose, chat=chat, **kw)
     system = load_system(variant)
     if variant == "ref":
         msgs = [{"role": "system", "content": system}, {"role": "user", "content": build_ref_user_message(req)}]
         out, errs = "", []
         for attempt in range(retries + 1):
-            raw = ollama_chat(msgs, model, host, think, **kw)
+            raw = chat(msgs, model, host, think, **kw)
             parts, fixes = autofix_ref(raw, req)
             out = assemble_ref(parts, req)
             errs = validate_ref(out, req)
@@ -1101,7 +1103,7 @@ def generate(req, model, host="http://localhost:11434", retries=2, think=False, 
         msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         errs = []
         for attempt in range(retries + 1):
-            raw = ollama_chat(msgs, model, host, think, fmt=slots_schema(len(plan)), **kw)
+            raw = chat(msgs, model, host, think, fmt=slots_schema(len(plan)), **kw)
             try:
                 out = assemble_slots(raw, req)
                 errs = validate(out, req, variant)
@@ -1118,7 +1120,7 @@ def generate(req, model, host="http://localhost:11434", retries=2, think=False, 
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     out, errs = "", []
     for attempt in range(retries + 1):
-        raw = ollama_chat(msgs, model, host, think, **kw)
+        raw = chat(msgs, model, host, think, **kw)
         out, fixes = autofix(raw, req)
         errs = validate(out, req, variant)
         if verbose:
@@ -1131,7 +1133,8 @@ def generate(req, model, host="http://localhost:11434", retries=2, think=False, 
     return {"variant": variant, "prompt": out, "errors": errs, "warning": dialogue_warning(req)}
 
 
-def generate_story(req, model, host, retries, think, verbose, **kw):
+def generate_story(req, model, host, retries, think, verbose, chat=None, **kw):
+    chat = chat or ollama_chat
     durs = split_story(req["duration"])
     msgs = [{"role": "system", "content": load_system("story")},
             {"role": "user", "content": story_user_message(req, durs)}]
@@ -1142,10 +1145,10 @@ def generate_story(req, model, host, retries, think, verbose, **kw):
                                              "end": {"type": "string"}, "lines": {"type": "array", "items": {"type": "string"}}},
             "required": ["beat", "start", "end", "lines"]}}},
         "required": ["style", "character", "clips"]}
-    plan = json.loads(extract_json(ollama_chat(msgs, model, host, think, fmt=schema, **kw)))
+    plan = json.loads(extract_json(chat(msgs, model, host, think, fmt=schema, **kw)))
     results = []
     for k, r in enumerate(story_clip_requests(plan, req, durs), 1):
-        res = generate(r, model, host, retries, think, verbose, **kw)
+        res = generate(r, model, host, retries, think, verbose, chat=chat, **kw)
         res["clip"], res["duration"] = k, r["duration"]
         results.append(res)
     return {"variant": "story", "plan": plan, "clips": results}
