@@ -1,25 +1,6 @@
 [project]
 name = "comfyui-bart-nodes"
-description = """A pack of 9 node groups (all named "Bart's ..." and filed under "Bart's nodes/...", so searching "bart" finds everything), built around image loading, prompt writing and video/music helpers.
-
-IMAGE
-- Load Random Image: loads an image from any folder on disk: by hand, at random, or the next one on every run (sequential mode is safe with batch counts and queued runs).
-- Image Picker: picks an image from ComfyUI's input folder through a full-screen thumbnail gallery designed for touch screens (names, folders, search, sort, S/M/L sizes, previous/next, upload), fixing the stock dropdown that closes the moment you tap it on a phone or tablet.
-- Smart Load Image (Crop): loads an image and lets you crop it right on the node with the mouse (aspect lock, snap grid, numeric fields); only the selected part is output.
-- Load Random Booru Image: pulls a post from a tag search on Gelbooru, yande.re, Konachan (and its safe mirror), Safebooru or Xbooru, with random, fixed or increment-on-queue positions, a size-limited download cache and no redirects off the site.
-- Anatomy Defect Filter: asks an Ollama vision model about anatomy defects (extra fingers, bad limbs) and splits images into passed / failed branches.
-
-TEXT
-- Load Random Prompt (52prompts): outputs a random prompt from one of 20 generators on 52prompts.com by running the site's own scripts in a small sandboxed JavaScript interpreter (no eval, no filesystem, bounded memory).
-- MiniMax H3 Prompt: turns a short request into a validated prompt for the MiniMax H3 video model (text-to-video, image-to-video, first/last frame, talking head, product ad, reference-to-video, and multi-clip stories over 15 s). A bundled kit does the shot plan, timecodes, trigger placement and dialogue blocks in Python, the LLM only writes the scene, and the answer is auto-fixed, validated and retried. The text comes from a local Ollama model or from a Qwen/Gemma text-encoder CLIP inside ComfyUI (no Ollama needed); a Generate button fills the result without running the graph (Ollama), and hand edits are never overwritten. It also outputs duration, frame count, width, height and seed to wire straight into the video node.
-
-LATENT
-- WAN Latent Trim Start: cuts frames off the start of a WAN video latent before the VAE decode, counted in real video frames.
-
-AUDIO
-- YuE2 Model Loader / Plan Score / Generate Song: full songs from a style and lyrics with m-a-p/YuE2-3B, with an editable ABC score in between (needs the yue2 wheel and a big GPU, or Apple silicon slowly).
-
-Every node has a documented facts table (needs, network, HTTP routes, what was verified and what was not); the HTTP routes are confined to their own folders or hosts and hardened against odd input. 13 example workflows are included, one of them with every node."""
+description = "Nodes for loading images, writing prompts and video/music work. Image: random/sequential loader for any folder, touch-friendly gallery picker for the input folder, loader with an on-node crop editor, booru tag search (Gelbooru, yande.re, Konachan, Safebooru, Xbooru), Ollama anatomy-defect filter. Text: 52prompts.com generators, MiniMax H3 video prompt writer (Ollama or a Qwen/Gemma CLIP, validated, with a Generate button). Latent: WAN latent start trim. Audio: YuE2 song generation. 13 example workflows."
 version = "0.13.0"
 license = { text = "MIT License" }
 
