@@ -1,5 +1,8 @@
 import hashlib
 import os
+import re
+
+from .. import selection as sequential
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
@@ -9,6 +12,11 @@ THUMB_SIZES = (128, 192, 256, 384, 512)
 
 # one listing is capped so a huge folder can't produce a megabyte of JSON
 MAX_ENTRIES = 5000
+
+# How the node picks its file: the one shown, a seeded random one from a folder, or the next one of a folder
+MODES = ("fixed", "random", "sequential")
+# the pool of random / sequential is capped too (a recursive walk over a whole disk must end)
+MAX_POOL = 20000
 
 
 class PathError(ValueError):
@@ -115,3 +123,63 @@ def thumb_cache_name(relative_path, mtime_ns, file_size, size):
     """Cache file name for one thumbnail; a changed file (mtime/size) gets a new name."""
     key = f"{relative_path}|{mtime_ns}|{file_size}".encode("utf-8")
     return f"{hashlib.sha256(key).hexdigest()[:32]}_{size}.webp"
+
+
+_DIGITS = re.compile(r"(\d+)")
+
+
+def natural_key(name):
+    """Sort key putting img2 before img10 (the gallery's own order, so stepping and sequential agree)."""
+    return [int(part) if part.isdigit() else part for part in _DIGITS.split(name.lower())]
+
+
+def list_pool(base, folder, recursive=False):
+    """(paths, truncated): the images random / sequential choose from, as input-folder-relative paths.
+
+    One folder level, or the whole tree with `recursive` (dot-folders skipped, symlinked sub-folders not
+    followed so a link back up cannot loop). Sorted naturally by path; a pool over MAX_POOL images keeps
+    the first ones in that walk order (folders visited alphabetically) and says so.
+    """
+    folder = clean_subfolder(folder)
+    top = join_inside(base, folder)
+    found = []
+    truncated = False
+    for root, dirs, names in os.walk(top):
+        dirs[:] = sorted((d for d in dirs if not d.startswith(".")), key=str.lower)
+        relative = os.path.relpath(root, top)
+        prefix = folder if relative == "." else (folder + "/" if folder else "") + relative.replace(os.sep, "/")
+        for name in sorted(names, key=str.lower):
+            if name.startswith(".") or not is_image_name(name):
+                continue
+            if len(found) >= MAX_POOL:
+                truncated = True
+                break
+            found.append(prefix + "/" + name if prefix else name)
+        if truncated or not recursive:
+            break
+    found.sort(key=natural_key)
+    return found, truncated
+
+
+def pick_seeded(files, seed):
+    """The image `seed` selects: the same seed always gives the same file, neighbouring seeds look unrelated."""
+    digest = hashlib.sha256(str(int(seed)).encode("ascii")).digest()
+    return files[int.from_bytes(digest[:8], "big") % len(files)]
+
+
+def choose_image(files, mode, image, seed, unique_id=None, pool_key="", edit_serial="", state=None):
+    """(path to load this run, path the widget should hold for the next run or None).
+
+    fixed: `image` itself. random: seeded pick from `files`. sequential: the root pack's pointer logic
+    (`selection.resolve_filenames`), so batch queues and hand edits behave as in Load Random Image.
+    """
+    if not files:
+        raise FileNotFoundError("no images in the chosen folder")
+    if mode == "random":
+        return pick_seeded(files, seed), None
+    if mode == "sequential":
+        chosen, following = sequential.resolve_filenames(
+            files, False, True, image, unique_id=unique_id, directory=pool_key, edit_serial=edit_serial, state=state
+        )
+        return chosen, following
+    return image, None

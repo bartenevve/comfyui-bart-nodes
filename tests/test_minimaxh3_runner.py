@@ -535,9 +535,10 @@ class TestRepairSpeed(unittest.TestCase):
     """A model stuck in a loop can answer with thousands of blank lines; the repair regexes must stay fast."""
 
     def timed(self, function, text, req):
-        start = time.perf_counter()
+        # CPU time of this thread's process, not wall time: a busy machine must not fail a complexity check
+        start = time.process_time()
         function(text, req)
-        return time.perf_counter() - start
+        return time.process_time() - start
 
     def test_pathological_answers_are_repaired_in_well_under_a_second(self):
         req = h3kit.make_request(request="a cat", duration=8, triggers="kodak_portra")

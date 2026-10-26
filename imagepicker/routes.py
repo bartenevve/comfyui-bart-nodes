@@ -7,7 +7,17 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
-from .selection import PathError, clean_subfolder, is_image_name, join_inside, list_directory, thumb_cache_name, thumb_size
+from .selection import (
+    PathError,
+    clean_subfolder,
+    is_image_name,
+    join_inside,
+    list_directory,
+    list_pool,
+    pick_seeded,
+    thumb_cache_name,
+    thumb_size,
+)
 from .thumbs import ImageTooLarge, make_thumb
 
 
@@ -43,6 +53,33 @@ async def list_folder(request):
         # caller's mistake, not a server fault
         refused = exc.errno in (errno.ENAMETOOLONG, errno.ELOOP, errno.EINVAL)
         return web.json_response({"error": f"cannot read folder: {exc.strerror}"}, status=400 if refused else 500)
+    return web.json_response(result)
+
+
+@PromptServer.instance.routes.get("/image_picker/pool")
+async def pool(request):
+    """How many images a random / sequential run would choose from in a folder, and (with `seed`) which
+    one the seeded random mode would load: the node's preview of its next run."""
+    query = request.rel_url.query
+    try:
+        subfolder = clean_subfolder(query.get("subfolder", ""))
+        recursive = query.get("recursive", "0") == "1"
+        seed = query.get("seed")
+        seed = int(seed) if seed not in (None, "") else None
+        files, truncated = await _run(list_pool, folder_paths.get_input_directory(), subfolder, recursive)
+    except PathError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except (ValueError, OverflowError):
+        return web.json_response({"error": "seed must be an integer"}, status=400)
+    except (FileNotFoundError, NotADirectoryError):
+        return web.json_response({"error": "folder not found"}, status=404)
+    except OSError as exc:
+        refused = exc.errno in (errno.ENAMETOOLONG, errno.ELOOP, errno.EINVAL)
+        return web.json_response({"error": f"cannot read folder: {exc.strerror}"}, status=400 if refused else 500)
+    pick = pick_seeded(files, seed) if files and seed is not None else None
+    result = {"count": len(files), "truncated": truncated, "pick": pick}
+    if query.get("list") == "1":
+        result["files"] = files  # for stepping through the pool: at most MAX_POOL short strings
     return web.json_response(result)
 
 

@@ -7,7 +7,7 @@ Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch
 | Node | Category | What it does | Needs |
 | --- | --- | --- | --- |
 | [**Bart's Load Random Image 🎲**](#load-random-image) | `Image` | loads an image from **any folder** on disk: by hand, at random, or the next one on every run | nothing beyond ComfyUI |
-| [**Bart's Image Picker (input folder) 🖼️**](#image-picker) | `Image` | picks an image from ComfyUI's input folder through a **full-screen thumbnail gallery that works on touch screens** | nothing beyond ComfyUI |
+| [**Bart's Image Picker (input folder) 🖼️**](#image-picker) | `Image` | picks an image from ComfyUI's input folder through a **full-screen thumbnail gallery that works on touch screens**; also a **seeded random** or **sequential** pick from a folder | nothing beyond ComfyUI |
 | [**Bart's Smart Load Image (Crop) ✂️**](#smart-load-image) | `Image` | loads an image and lets you **crop it on the node**; only the selected part is output | nothing beyond ComfyUI |
 | [**Bart's Load Random Booru Image 🎲**](#load-random-booru-image) | `Image` | pulls a post from a **booru tag search** (Gelbooru, yande.re, Konachan, Safebooru, Xbooru) | internet access |
 | [**Bart's Anatomy Defect Filter (Ollama) 🔍**](#anatomy-defect-filter) | `Image` | splits images into `passed` / `failed` by asking an Ollama **vision model** about anatomy defects | an Ollama server with a vision chat model |
@@ -91,7 +91,7 @@ The preview shows what **actually** loaded on the last run (it survives saving a
 
 ## Image Picker
 
-A Load Image replacement for **phones and tablets**. On a touch screen the stock file dropdown opens on the finger-down and closes again on the finger-up, leaving only the ◀ ▶ arrows to step through files. This node opens a **full-screen gallery** instead.
+A Load Image replacement for **phones and tablets**. On a touch screen the stock file dropdown opens on the finger-down and closes again on the finger-up, leaving only the ◀ ▶ arrows to step through files. This node opens a **full-screen gallery** instead, and can also pick **at random (by seed)** or **the next file on every run** from a folder of the input folder.
 
 | | |
 | --- | --- |
@@ -99,19 +99,23 @@ A Load Image replacement for **phones and tablets**. On a touch screen the stock
 | **Example workflow** | [`11_image_picker.json`](example_workflows/11_image_picker.json) |
 | **Needs** | nothing beyond ComfyUI |
 | **Network** | none |
-| **HTTP routes** | `/image_picker/list`, `/image_picker/thumb` — confined to the input folder |
-| **Verified** | on a 375×812 touch-emulated viewport: layout, scrolling, tap-to-select, the early-tap guard, search, sort, sizes, a 300-file folder with chunked rendering, stepping, upload into a subfolder, running the node. On a desktop viewport with a real mouse: a double-click on a folder (opens it once and selects nothing in the folder it lands in), Esc, an 81-megapixel image (⚠️ cell, HTTP 413), twelve parallel thumbnail requests for it, and revalidation answered with HTTP 304. **Not** on a physical phone or tablet: the emulator sends mouse-style clicks, so the real finger-up behaviour that breaks the stock dropdown was reasoned about and guarded against, not reproduced. |
+| **HTTP routes** | `/image_picker/list`, `/image_picker/pool`, `/image_picker/thumb` — confined to the input folder |
+| **Verified** | the modes in a real ComfyUI (API and frontend): seeded random from a folder with and without subfolders (the previewed file is the file the run loads, also after the seed changed by itself), sequential stepping with a batch of 3 queued runs and with ◀ ▶ through a recursive pool, the gallery's **Use this folder**, save and reload, and an old workflow saved before the modes existed (loads as Fixed). On a 375×812 touch-emulated viewport (fixed mode): layout, scrolling, tap-to-select, the early-tap guard, search, sort, sizes, a 300-file folder with chunked rendering, stepping, upload into a subfolder, running the node. On a desktop viewport with a real mouse: a double-click on a folder (opens it once and selects nothing in the folder it lands in), Esc, an 81-megapixel image (⚠️ cell, HTTP 413), twelve parallel thumbnail requests for it, and revalidation answered with HTTP 304. **Not** on a physical phone or tablet: the emulator sends mouse-style clicks, so the real finger-up behaviour that breaks the stock dropdown was reasoned about and guarded against, not reproduced. |
 
 ### Widgets
 
 | Widget | Meaning |
 | --- | --- |
+| **Fixed / 🎲 Random / ➡ Sequential** | Big segmented buttons (the node's `mode`). **Fixed**: the image shown. **Random**: a file of the pool chosen by the `seed`. **Sequential**: the file shown, then the next one of the pool on every run, wrapping after the last. |
+| pool row (Random / Sequential) | `📁 trip/2024 · 312 images`: the folder the pool is made of (tap it to change it) and a **subfolders** checkbox (`include_subfolders`, off by default: only that folder; on: the whole tree below it). A pool starts at the folder of the image you had. |
+| `seed` + `control after generate` | Shown in Random mode only. The preview shows **the file this seed selects, i.e. what the next run will load**; the usual `randomize` control gives a new one after every queued run, 🎲 sets a new seed right now, `fixed` repeats the same image. The same seed always gives the same file (for the same folder contents). |
 | **🖼 Choose image** (or tap the preview) | Opens the gallery. The button is an ordinary page button, not a canvas widget, and the gallery ignores taps in its first 350 ms, so the opening gesture can't select or dismiss anything. |
 | the gallery | Thumbnails **with file names**, folders first. Native touch scrolling (momentum included; a scroll never counts as a tap). **Tap an image** to select it and close. Large 44 px controls, 16 px inputs (no iOS zoom on focus). |
 | breadcrumbs | `🏠 input › folder › subfolder`: tap a segment to jump up; tap a 📁 to go into a subfolder (the stock node can't leave the top level). |
 | search / sort | Filter by name; sort by name A→Z / Z→A (numbers sort naturally: `img2` before `img10`), newest or oldest first. |
 | size | **S / M / L** buttons and a slider (90-400 px cells). Size and sort are remembered in the browser. |
-| ◀ / ▶ | The previous / next file in the same folder, wrapping at the ends. |
+| ◀ / ▶ | The previous / next file in the same folder (Fixed) or in the whole pool (Sequential), wrapping at the ends. Hidden in Random mode. |
+| **📁 Use this folder** | In the gallery of Random / Sequential mode: makes the folder you are looking at the pool. Tapping an image there selects it (the start of the sequence), and moves the pool to its folder if it is outside the current one. |
 | **＋ Upload** | In the gallery (into the folder being viewed) and on the node: pick files, or drop an image on the node. Only image files are taken (PNG, JPEG, WebP, BMP, GIF); anything else is reported and skipped. One uploaded file is selected right away. |
 
 ### Outputs
@@ -122,14 +126,18 @@ A Load Image replacement for **phones and tablets**. On a touch screen the stock
 | `MASK` | `MASK` | From the alpha channel, like Load Image. |
 | `filename` | `STRING` | The path inside the input folder, e.g. `trip/IMG_0042.jpg`. |
 | `width`, `height` | `INT` | Size of the image. |
+| `folder` | `STRING` | The folder of the loaded image inside the input folder (`trip/2024`; empty for the input folder itself). |
 
 ### How it works
+
+**Modes.** The mode, pool folder, `include_subfolders`, `seed` and a hidden `edit_serial` are widgets added after `image`, so workflows saved before them load as Fixed. Random picks `pool[hash(seed) mod N]` (a SHA-256 of the seed, so neighbouring seeds don't walk the list) from the pool sorted in natural order (`img2` before `img10`); the server and the preview use the same function, which is why the preview is exact. Sequential uses the same pointer logic as [Load Random Image](#load-random-image) (including `edit_serial`: batch counts above 1 and queued runs advance one by one, a hand pick wins, even of the file the last run started with), keyed by node and pool, and pushes the next file into the widget after each run. A run whose inputs are unchanged is cached by ComfyUI: Random with a fixed seed does not re-run downstream nodes, Sequential always runs. An empty or missing pool folder is an error naming it.
 
 The node stores the path in a hidden text widget (a normal dropdown would have to list every file and subfolder up front, and ComfyUI rejects values that aren't in it). The gallery gets its data from two routes: `list` (one folder level: subfolders, and image files with size and date) and `thumb` (a WebP thumbnail in one of five size buckets, 128-512 px, cached in ComfyUI's temp folder and keyed by path + modification time; the browser revalidates them on every use (`Cache-Control: no-cache` plus an ETag, so an unchanged thumbnail costs an HTTP 304) and an edited file gets a fresh one at once). Big photos are decoded at reduced size; an image over **64 megapixels** is not decoded at all, and a file that can't be read shows a ⚠️ cell. At most **three thumbnails are generated at the same time**, however many the gallery asks for. The gallery is a shared module (`js/bart_image_gallery.js`), so other nodes can reuse it; opening it while another one is open replaces that one, and a double-tap can't select a second cell.
 
 ### Notes and limits
 
 - Only the **input folder** (and its subfolders) is reachable. The routes refuse `..`, absolute paths, NUL bytes and (on Windows) drive letters, answer a name the file system itself refuses (too long, a symlink loop) with HTTP 400, and serve only image files. A symlinked collection placed *inside* the input folder works (as with the stock `/view`); the check is by path, not by where a symlink ends up.
+- A pool is capped at 20,000 images (the first ones of a walk that visits folders alphabetically; the pool row shows `+`). Subfolders reached through a symbolic link are not followed in a recursive pool (a link back up could loop), the pool folder itself may be one.
 - A folder listing is capped at 5000 images: the **first 5000 by name** are shown and the gallery says so (use search or subfolders for the rest).
 
 ---
@@ -586,7 +594,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 
 **Directory node (Load Random Image).** The `/random_image/list`, `/pick` and `/view` routes accept a `dir` parameter with **no restriction whatsoever**: anyone who can reach ComfyUI's HTTP port (not necessarily through the graph or UI at all; a bare GET is enough) can list and read arbitrary files the ComfyUI process can access. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug an allowlist should close.
 
-**Image Picker.** Its routes take a subfolder and a file name relative to ComfyUI's input folder and refuse `..`, absolute paths, NUL bytes and (on Windows) drive letters; only image files are listed or turned into thumbnails. The check is by path, not by realpath, so a symlinked collection inside the input folder works (as with the stock `/view`). Anyone reaching the port can read the images in the input folder and make the server generate thumbnails (cached in the temp folder); the work is bounded: images over 64 megapixels are refused with HTTP 413, and at most three thumbnails are decoded at once.
+**Image Picker.** Its routes take a subfolder and a file name relative to ComfyUI's input folder and refuse `..`, absolute paths, NUL bytes and (on Windows) drive letters; only image files are listed or turned into thumbnails. The check is by path, not by realpath, so a symlinked collection inside the input folder works (as with the stock `/view`). `/image_picker/pool` only counts (and, with `list=1`, names) images, capped at 20,000. Anyone reaching the port can read the images in the input folder and make the server generate thumbnails (cached in the temp folder); the work is bounded: images over 64 megapixels are refused with HTTP 413, and at most three thumbnails are decoded at once.
 
 **Booru node.** It makes **outbound requests to a third-party image board** from the ComfyUI host, and any prompt containing it does so on execution. The `/random_booru/*` routes take `source` + `tags` + `index`/`post_id`, never a raw URL. The file URL itself is read out of third-party responses (HTML for Gelbooru, JSON for the rest), so every candidate must be on the source's own domain or a subdomain (`gelbooru.com` / `imgN.gelbooru.com`, `yande.re` / `files.yande.re`, `xbooru.com` / `img.xbooru.com`, ...); a candidate on any other host is skipped, `download()` re-checks the host right before the request goes out, and the HTTP client refuses a redirect that leaves the domain (the Cookie and Referer never travel to another host), so these endpoints can't be pointed at an arbitrary target (no SSRF). They are unauthenticated like everything else here: anyone reaching the port can make your server fetch booru pages and fill the temp cache. Downloaded content is arbitrary third-party imagery, entirely unfiltered by rating, and cached copies stay in ComfyUI's temp directory until it is cleaned.
 

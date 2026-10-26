@@ -52,6 +52,17 @@ export async function fetchListing(subfolder) {
     return data;
 }
 
+// What a random / sequential run would choose from: { count, truncated, pick, files? } (pick needs a seed)
+export async function fetchPool(subfolder, recursive, seed = null, list = false) {
+    const params = new URLSearchParams({ subfolder, recursive: recursive ? "1" : "0" });
+    if (seed !== null && seed !== undefined) params.set("seed", String(seed));
+    if (list) params.set("list", "1");
+    const resp = await fetch("/image_picker/pool?" + params.toString());
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error || "HTTP " + resp.status);
+    return data;
+}
+
 export async function uploadToInput(file, subfolder) {
     const body = new FormData();
     body.append("image", file);
@@ -139,11 +150,13 @@ function el(tag, className, text) {
 
 /**
  * Open the gallery. `current` is the selected path ("sub/name.png" or ""), `onSelect(path)`
- * gets the chosen one. Returns { close }.
+ * gets the chosen one. `folder` (optional) is the folder to open at instead of the current image's.
+ * With `onUseFolder(subfolder)` the header gets a "Use this folder" button (for nodes that choose
+ * from a whole folder). Returns { close }.
  */
 let openGallery = null;
 
-export function openImageGallery({ current = "", title = "Choose an image", onSelect }) {
+export function openImageGallery({ current = "", title = "Choose an image", onSelect, folder = null, onUseFolder = null }) {
     // a second press on the (still focused) button must not stack another gallery on the first
     if (openGallery) openGallery.close();
     injectStyle();
@@ -154,7 +167,7 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
 
     const prefs = loadPrefs();
     const state = {
-        subfolder: splitPath(current).subfolder,
+        subfolder: folder !== null ? folder : splitPath(current).subfolder,
         currentPath: current,
         folders: [],
         files: [],
@@ -184,8 +197,12 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
     fileInput.accept = IMAGE_ACCEPT;
     fileInput.multiple = true;
     fileInput.style.display = "none";
+    const useButton = el("button", "bgal-btn on", "📁 Use this folder");
+    useButton.type = "button";
     const head = el("div", "bgal-head");
-    head.append(closeButton, crumbs, uploadButton, fileInput);
+    head.append(closeButton, crumbs);
+    if (onUseFolder) head.append(useButton);
+    head.append(uploadButton, fileInput);
 
     const search = el("input");
     search.type = "search";
@@ -246,6 +263,12 @@ export function openImageGallery({ current = "", title = "Choose an image", onSe
         }
     }
     document.addEventListener("keydown", onKey, true);
+    useButton.addEventListener("click", () => {
+        if (guarded()) return;
+        const subfolder = state.subfolder;
+        close();
+        if (onUseFolder) onUseFolder(subfolder);
+    });
     closeButton.addEventListener("click", () => {
         if (!guarded()) close();
     });
