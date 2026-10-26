@@ -61,7 +61,7 @@ try:
     from .minimaxh3prompt import routes as minimaxh3prompt_routes  # noqa: F401  registers /minimax_h3
 
     NODE_CLASS_MAPPINGS["MiniMaxH3Prompt"] = MiniMaxH3Prompt
-    NODE_DISPLAY_NAME_MAPPINGS["MiniMaxH3Prompt"] = "Bart's MiniMax H3 Prompt (Ollama) \U0001f3ac"
+    NODE_DISPLAY_NAME_MAPPINGS["MiniMaxH3Prompt"] = "Bart's MiniMax H3 Prompt Helper (Ollama/Clip) \U0001f3ac"
 except Exception:
     logger.exception("comfyui-bart-nodes: MiniMaxH3Prompt failed to load, skipping it")
 
