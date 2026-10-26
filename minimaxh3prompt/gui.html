@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H3 Prompt Kit</title>
+<style>
+:root{
+  --bg:#f6f6f4; --panel:#ffffff; --ink:#1d1d1b; --muted:#6b6b66; --line:#e2e1dc;
+  --accent:#3a5bd9; --accent-ink:#ffffff; --ok:#1f7a4d; --ok-bg:#e7f4ec; --bad:#b3261e; --bad-bg:#fbeaea;
+  --warn:#8a5a00; --warn-bg:#fdf3dc; --code:#f1f0ec; --radius:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#141414; --panel:#1d1d1d; --ink:#ececea; --muted:#9b9b95; --line:#303030;
+    --accent:#7d97ff; --accent-ink:#0d0d0d; --ok:#6fd39e; --ok-bg:#16291f; --bad:#ff8a80; --bad-bg:#331a19;
+    --warn:#ffcf70; --warn-bg:#2f2614; --code:#181818; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}
+header h1{font-size:16px;margin:0 12px 0 0;font-weight:650;letter-spacing:.2px}
+main{display:grid;grid-template-columns:minmax(360px,1fr) minmax(360px,1.1fr);gap:16px;padding:16px 18px;max-width:1500px;margin:0 auto}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+section.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+input,select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+textarea{resize:vertical;min-height:70px}
+textarea.code,pre{font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+.row{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(110px,1fr))}
+.hdr-field{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.hdr-field input,.hdr-field select{width:auto;padding:5px 8px}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button:disabled{opacity:.5;cursor:wait}
+.tabs{display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid var(--line)}
+.tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;padding:8px 10px;color:var(--muted)}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.hidden{display:none}
+.ref{display:grid;grid-template-columns:118px 160px 1fr 56px 32px;gap:6px;margin-bottom:6px}
+@media (max-width:700px){.ref{grid-template-columns:1fr 1fr;} .ref input:nth-of-type(1){grid-column:1/3} header{position:static} #model{max-width:58vw}}
+.ref button{padding:4px}
+.muted{color:var(--muted);font-size:12px}
+.badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;background:var(--code);border:1px solid var(--line);margin-right:6px}
+.status{margin-top:10px;padding:8px 10px;border-radius:8px;font-size:13px}
+.status.ok{background:var(--ok-bg);color:var(--ok)} .status.bad{background:var(--bad-bg);color:var(--bad)} .status.warn{background:var(--warn-bg);color:var(--warn)}
+.status ul{margin:4px 0 0 18px;padding:0}
+#out{min-height:340px}
+details{margin-top:10px} summary{cursor:pointer;color:var(--muted);font-size:12px}
+pre{white-space:pre-wrap;background:var(--code);border:1px solid var(--line);border-radius:8px;padding:8px;max-height:320px;overflow:auto}
+.hist{display:flex;flex-direction:column;gap:4px;max-height:200px;overflow:auto}
+.hist button{text-align:left;font-size:12px;padding:5px 8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>H3 Prompt Kit</h1>
+  <span class="hdr-field">Ollama <input id="host" size="22"></span>
+  <span class="hdr-field">Модель <select id="model"></select> <button id="reload" title="Обновить список">↻</button></span>
+  <span class="hdr-field">temp <input id="temperature" type="number" step="0.1" min="0" max="1.5" value="0.3" style="width:62px"></span>
+  <span class="hdr-field">повторы <input id="retries" type="number" min="0" max="5" value="2" style="width:52px"></span>
+  <span class="hdr-field">max токенов <input id="num_predict" type="number" placeholder="авто" style="width:80px"></span>
+  <span class="hdr-field"><input id="think" type="checkbox"> thinking</span>
+</header>
+
+<main>
+<section class="card">
+  <div class="tabs">
+    <button data-tab="kit" class="on">Конструктор</button>
+    <button data-tab="uni">Универсальный</button>
+    <button data-tab="chk">Проверка</button>
+  </div>
+
+  <!-- KIT -->
+  <div id="tab-kit">
+    <label>Что должно быть в видео (любой язык)</label>
+    <textarea id="request" rows="3" placeholder="девушка в кафе смотрит в окно на дождь, потом улыбается"></textarea>
+    <div class="row">
+      <div><label>Длительность, с</label><input id="duration" type="number" min="4" max="180" value="8"></div>
+      <div><label>Формат</label><select id="aspect"><option>16:9</option><option>9:16</option><option>1:1</option><option>4:3</option><option>3:4</option><option>21:9</option></select></div>
+      <div><label>Режим кадров</label><select id="mode"><option value="T2VA">текст</option><option value="I2VA">первый кадр (I2VA)</option><option value="FL2VA">первый+последний (FL2VA)</option><option value="L2VA">последний кадр (L2VA)</option></select></div>
+      <div><label>Вариант</label><select id="variant"></select></div>
+      <div><label>Шотов</label><select id="shots"><option value="">авто</option><option>1</option><option>2</option><option>3</option></select></div>
+    </div>
+    <div id="f-image" class="hidden"><label>Что на первом кадре</label><input id="image" placeholder="ginger cat on a white windowsill, sunny street outside"></div>
+    <div id="f-start" class="hidden"><label>Первый кадр (Picture 1)</label><input id="start"></div>
+    <div id="f-end" class="hidden"><label>Последний кадр</label><input id="end"></div>
+    <label>Триггерные слова <span class="muted">— через запятую; префиксы style: subject: object: place:</span></label>
+    <input id="triggers" placeholder="style:kodak_portra, subject:ohwx_girl">
+    <label>Реплики <span class="muted">— по одной на строку; второй спикер: «S2: ...»</span></label>
+    <textarea id="dialogue" rows="2" placeholder="Ты опоздал."></textarea>
+    <label>Текст на экране <span class="muted">— через |</span></label>
+    <input id="text" placeholder="Aqua Nera">
+    <label>Референсы (Reference to Video) <span class="muted">— порядок = нумерация Picture / Video / Audio</span></label>
+    <div id="refs"></div>
+    <button id="addref">+ референс</button>
+    <div class="actions">
+      <button class="primary" id="gen">Сгенерировать</button>
+      <button id="build">Что уйдёт в модель</button>
+    </div>
+  </div>
+
+  <!-- UNIVERSAL -->
+  <div id="tab-uni" class="hidden">
+    <p class="muted">Один системный промпт для всех режимов. Пишите задание свободным текстом: длительность, формат, триггеры, реплики в кавычках, какие картинки/видео/аудио и зачем.</p>
+    <label>Задание</label>
+    <textarea id="task" rows="9" placeholder="Сделай видео 12 секунд вертикальное: бариста рисует латте-арт, потом протягивает чашку в камеру и говорит «Ваш капучино!». Триггеры: subject:barista_v2, style:warm_film"></textarea>
+    <div class="actions">
+      <button class="primary" id="ugen">Сгенерировать</button>
+      <button id="usys">Показать системный промпт</button>
+    </div>
+  </div>
+
+  <!-- CHECK -->
+  <div id="tab-chk" class="hidden">
+    <p class="muted">Вставьте любой промпт H3. Проверка использует поля «Конструктора» (длительность, режим, триггеры, реплики, референсы).</p>
+    <textarea id="paste" class="code" rows="12"></textarea>
+    <div class="actions">
+      <button class="primary" id="check">Проверить</button>
+      <button id="fix">Починить и проверить</button>
+    </div>
+  </div>
+
+  <details><summary>История (в этом браузере)</summary><div class="hist" id="hist"></div></details>
+</section>
+
+<section class="card">
+  <div><span class="badge" id="vbadge">—</span><span class="muted" id="timer"></span></div>
+  <label>Промпт для H3</label>
+  <textarea id="out" class="code" spellcheck="false"></textarea>
+  <div class="actions">
+    <button id="copy">Копировать</button>
+    <button id="save">Скачать .txt</button>
+  </div>
+  <div id="status"></div>
+  <details id="logbox"><summary>Журнал</summary><pre id="log"></pre></details>
+  <details id="sysbox"><summary>System / user сообщения</summary><pre id="sys"></pre></details>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let META = {roles:{}, variants:[]};
+const ROLE_RU = {subject:"персонаж/предмет", scene:"локация", style:"стиль", prop:"реквизит", first_frame:"первый кадр",
+  last_frame:"последний кадр", motion:"движение", camera:"камера/темп", edit:"монтаж видео", continue:"продолжение",
+  voice:"голос", music_copy:"музыка как есть", music_ref:"музыка «в стиле»", sound_copy:"вся дорожка"};
+const KIND_RU = {image:"картинка", video:"видео", audio:"аудио"};
+const store = { get(k,d){ try{ const v = localStorage.getItem(k); return v===null?d:JSON.parse(v);}catch(e){return d;} },
+                set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
+
+function refRow(r={kind:"image",role:"subject",desc:"",sid:""}){
+  const row = document.createElement("div"); row.className="ref";
+  const kind = document.createElement("select");
+  for (const k of ["image","video","audio"]) kind.add(new Option(KIND_RU[k], k));
+  kind.value = r.kind;
+  const role = document.createElement("select");
+  const fillRoles = () => { role.innerHTML=""; for (const x of (META.roles[kind.value]||[])) role.add(new Option(ROLE_RU[x]||x, x)); };
+  fillRoles(); role.value = r.role || role.options[0]?.value;
+  kind.onchange = () => { fillRoles(); save(); };
+  const desc = document.createElement("input"); desc.placeholder="описание (англ. лучше)"; desc.value=r.desc||"";
+  const sid = document.createElement("input"); sid.placeholder="S1"; sid.value=r.sid||""; sid.title="ID спикера, если говорит";
+  const del = document.createElement("button"); del.textContent="×"; del.onclick=()=>{row.remove(); save();};
+  for (const el of [kind,role,desc,sid]) el.addEventListener("change", save);
+  row.append(kind,role,desc,sid,del); $("refs").append(row);
+}
+function refs(){ return [...document.querySelectorAll(".ref")].map(r=>{const e=r.querySelectorAll("select,input");
+  return {kind:e[0].value, role:e[1].value, desc:e[2].value, sid:e[3].value};}); }
+
+const FIELDS = ["request","duration","aspect","mode","variant","shots","image","start","end","triggers","dialogue","text","task","host","temperature","retries","num_predict"];
+function form(){ const d={}; for (const f of FIELDS) d[f]=$(f).value; d.think=$("think").checked; d.model=$("model").value; d.refs=refs(); return d; }
+function save(){ store.set("h3form", form()); }
+function restore(){ const d=store.get("h3form",null); if(!d) return;
+  for (const f of FIELDS) if (d[f]!==undefined && $(f)) $(f).value=d[f];
+  $("think").checked=!!d.think; (d.refs||[]).forEach(refRow); window._savedModel=d.model; }
+
+function modeFields(){ const m=$("mode").value;
+  $("f-image").classList.toggle("hidden", m!=="I2VA");
+  $("f-start").classList.toggle("hidden", m!=="FL2VA");
+  $("f-end").classList.toggle("hidden", !(m==="FL2VA"||m==="L2VA")); }
+
+async function api(path, body){
+  const r = await fetch(path, {method: body?"POST":"GET", headers:{"Content-Type":"application/json","X-Ollama":$("host").value}, body: body?JSON.stringify(body):undefined});
+  return r.json();
+}
+async function loadModels(){
+  const r = await api("/api/models"); const sel=$("model"); sel.innerHTML="";
+  if (r.error){ sel.add(new Option("— "+r.error+" —","")); return; }
+  for (const m of r.models) sel.add(new Option(m,m));
+  if (window._savedModel && r.models.includes(window._savedModel)) sel.value=window._savedModel;
+}
+
+let tick=null;
+function busy(on, label){
+  for (const b of document.querySelectorAll("button.primary, #build, #fix, #usys")) b.disabled=on;
+  clearInterval(tick); if (!on) $("timer").textContent="";
+  if (on){ const t0=Date.now(); $("timer").textContent=" "+label+"…";
+    tick=setInterval(()=>{$("timer").textContent=` ${label}… ${((Date.now()-t0)/1000).toFixed(0)} с`;},500); }
+}
+function show(res){
+  if (res.error){ $("status").className="status bad"; $("status").innerHTML="Ошибка: "+esc(res.error); $("log").textContent=res.trace||""; return; }
+  $("vbadge").textContent = res.variant || "—";
+  if (res.prompt!==undefined) $("out").value = res.prompt;
+  const errs = res.errors||[], warn=[].concat(res.warning||[], res.warnings||[]).filter(Boolean);
+  let html = errs.length ? `<b>Осталось ошибок: ${errs.length}</b><ul>${errs.map(e=>"<li>"+esc(e)+"</li>").join("")}</ul>`
+                         : "<b>Проверка пройдена</b>";
+  if (res.fixes && res.fixes.length) html += `<div>Автопочинка: ${esc(res.fixes.join("; "))}</div>`;
+  if (warn.length) html += `<div>⚠ ${esc(warn.join("; "))}</div>`;
+  $("status").className = "status " + (errs.length ? "bad" : (warn.length ? "warn" : "ok"));
+  $("status").innerHTML = html;
+  $("log").textContent = (res.log||[]).join("\n");
+  if (res.seconds != null) $("timer").textContent = ` готово за ${res.seconds} с`;
+  if (res.prompt) addHist(res);
+}
+const esc = s => String(s).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function addHist(res){ const h=store.get("h3hist",[]);
+  h.unshift({t:new Date().toLocaleString(), v:res.variant, p:res.prompt, title:($("request").value||$("task").value).slice(0,60)});
+  store.set("h3hist", h.slice(0,30)); drawHist(); }
+function drawHist(){ const box=$("hist"); box.innerHTML="";
+  for (const x of store.get("h3hist",[])){ const b=document.createElement("button");
+    b.textContent=`${x.t} · ${x.v} · ${x.title}`; b.onclick=()=>{$("out").value=x.p; $("vbadge").textContent=x.v;}; box.append(b);} }
+
+async function run(path, body, label){
+  if (!$("model").value && path!=="/api/build" && path!=="/api/validate" && path!=="/api/universal_system"){ show({error:"выберите модель"}); return; }
+  save(); busy(true,label);
+  try { const res = await api(path, body); return res; }
+  catch(e){ return {error:String(e)}; }
+  finally { busy(false); }
+}
+
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on", x===b));
+  for (const t of ["kit","uni","chk"]) $("tab-"+t).classList.toggle("hidden", b.dataset.tab!==t);
+  store.set("h3tab", b.dataset.tab);
+});
+$("gen").onclick = async()=>{ const r=await run("/api/generate", form(), "генерация"); show(r); };
+$("build").onclick = async()=>{ const r=await run("/api/build", form(), "сборка");
+  if (r.error) return show(r);
+  $("vbadge").textContent=r.variant; $("sys").textContent="=== SYSTEM ===\n"+r.system+"\n\n=== USER ===\n"+r.user;
+  $("sysbox").open=true; $("status").className = r.warnings.length?"status warn":""; $("status").innerHTML = r.warnings.length?"⚠ "+esc(r.warnings.join("; ")):""; $("timer").textContent=""; };
+$("ugen").onclick = async()=>{ const d=form(); const r=await run("/api/universal", d, "генерация"); show(r); };
+$("usys").onclick = async()=>{ const r=await run("/api/universal_system", {}, "загрузка"); $("sys").textContent=r.system; $("sysbox").open=true; $("timer").textContent=""; };
+$("check").onclick = async()=>{ const d=form(); d.prompt=$("paste").value; show(await run("/api/validate", d, "проверка")); };
+$("fix").onclick = async()=>{ const d=form(); d.prompt=$("paste").value; d.fix=true; show(await run("/api/validate", d, "починка")); };
+$("copy").onclick = async()=>{ try{ await navigator.clipboard.writeText($("out").value); $("copy").textContent="Скопировано"; }catch(e){ $("out").select(); document.execCommand("copy"); }
+  setTimeout(()=>$("copy").textContent="Копировать",1200); };
+$("save").onclick = ()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([$("out").value],{type:"text/plain"}));
+  a.download="h3_prompt.txt"; a.click(); };
+$("addref").onclick = ()=>{ refRow(); save(); };
+$("reload").onclick = loadModels;
+$("mode").onchange = ()=>{ modeFields(); save(); };
+document.addEventListener("change", e=>{ if (FIELDS.includes(e.target.id)) save(); });
+
+(async()=>{
+  META = await api("/api/meta");
+  for (const v of META.variants) $("variant").add(new Option(v,v));
+  $("host").value = META.default_host;
+  restore(); modeFields(); drawHist();
+  const tab=store.get("h3tab","kit"); document.querySelector(`.tabs button[data-tab="${tab}"]`)?.click();
+  await loadModels();
+})();
+</script>
+</body>
+</html>

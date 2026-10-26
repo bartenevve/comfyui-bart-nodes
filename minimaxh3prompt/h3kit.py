@@ -89,7 +89,7 @@ def plan_shots(duration, mode="T2VA", n=None):
     if n == 1:
         return [(0, d)]
     if n == 2:
-        cut = 4 if d <= 9 else d // 2
+        cut = 4 if d <= 9 else 5
         return [(0, cut), (cut, d)]
     a, b = round(d / 3), round(2 * d / 3)
     return [(0, a), (a, b), (b, d)]
@@ -439,6 +439,8 @@ def validate(text, req, variant=None):
             err.append(f"Shot {i}: no camera sentence (e.g. 'The camera holds a static shot.')")
         elif n > 1:
             err.append(f"Shot {i}: {n} camera sentences — keep exactly one")
+        if re.search(r"\b(?:toward|past|from|around|on|tracks) X\b", s):
+            err.append(f"Shot {i}: replace the placeholder X in the camera sentence with the real target")
         for cam in re.findall(r"the camera [^.]*\.", low):
             for m in re.findall(r"at (?:a |an )?\w+ (?:speed|pace)", cam):
                 if m not in ("at slow speed", "at fast speed"):
