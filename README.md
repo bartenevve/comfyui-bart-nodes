@@ -14,6 +14,7 @@ Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch
 | [**Bart's Load Random Prompt (52prompts) 🎲**](#load-random-prompt-52prompts) | `Text` | outputs a random text prompt from one of 20 generators on [52prompts.com](https://52prompts.com/) | internet access |
 | [**Bart's MiniMax H3 Prompt Helper (Ollama/Clip) 🎬**](#minimax-h3-prompt) | `Text` | writes ready-to-use **MiniMax H3 video prompts** with a local LLM (Ollama, or a text-LLM CLIP inside ComfyUI); a Generate button fills the result without running the graph | an Ollama server + a chat model, or a Qwen / Gemma CLIP |
 | [**Bart's Easy Ollama 🦙**](#easy-ollama) | `Text` | the plainest **Ollama call**: address, model, prompt, optional images, a JSON of options in; the answer and a debug text out | an Ollama server (a vision model for images) |
+| [**Bart's Lora Selector 🎛️**](#lora-selector) | `Model` | **several LoRAs on one node**, each with a switch and a strength, chosen on a screen that shows trigger words, model family and recommended settings, with filter and search | nothing beyond ComfyUI |
 | [**Bart's WAN Latent Trim Start 🎞️**](#wan-latent-trim-start) | `Latent` | cuts frames off the **start** of a WAN video latent **before the VAE decode**; the count is in pixel frames | nothing beyond ComfyUI |
 | [**Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵**](#yue2-music-generation) | `Audio` | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score in between | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon slowly) |
 | [**Bart's VoxCPM Model Loader / Speak (TTS / voice clone) 🗣️**](#voxcpm-speech) | `Audio` | speaks a text with [OpenBMB VoxCPM](https://github.com/OpenBMB/VoxCPM): plain, in a **voice described in words**, or **cloned from a recording** | the `voxcpm` package and a GPU (or a lot of patience) |
@@ -508,6 +509,66 @@ Keys that are not model options are lifted out of it: `think`, `keep_alive`, `fo
 
 ---
 
+## Lora Selector
+
+Several LoRAs on **one node**: each row has an ON/OFF switch and a strength, and the LoRA is chosen on a **picker screen** that shows what is known about every file.
+
+| | |
+| --- | --- |
+| **Class · category** | `LoraSelector` · `Bart's nodes/Model` |
+| **Example workflow** | [`16_lora_selector.json`](example_workflows/16_lora_selector.json) |
+| **Needs** | nothing beyond ComfyUI (LoRA files in its `loras` folders) |
+| **Network** | none |
+| **HTTP routes** | `/lora_selector/list`, `/info`, `/preview` (GET) and `/notes` (POST, JSON only) — only the files ComfyUI itself lists as LoRAs (see [Security](#security)) |
+| **Verified** | in a real ComfyUI with sample LoRA files (their safetensors headers, Civitai and A1111 sidecar files and preview images): the picker screen (cards, previews, family chips, search by name, trigger word, frequent tag and your own notes, both together with a chip), the detail panel, adding rows (the next row appears, a recommended strength is taken over), ON/OFF, strength with a clamp to ±100, a CLIP strength field when a CLIP is connected, a missing file marked in red, save and reload, queue-time errors (missing file, bad strength, bad JSON), saving notes, and the layout on a 375 px phone viewport. The application order, strengths and outputs are checked in unit tests against stand-ins for `comfy.sd` / `comfy.utils`. **Not:** applying a real LoRA to a real model (no checkpoint was installed, so `load_lora_for_models` itself was not run), and metadata from real downloaded files beyond the formats described below. |
+
+### Widgets and inputs
+
+| | Meaning |
+| --- | --- |
+| `model` (required input) | The diffusion model the LoRAs are applied to. |
+| `clip` (optional input) | The CLIP model. Connect it to apply the LoRAs to it too and to get a **CLIP strength** field on every row (empty = the same as the model strength). Without it the `clip` output is empty. |
+| the rows | **＋ Add LoRA…** opens the picker. A filled row has a switch (**ON** / **OFF**), the LoRA's name (tap it to pick another), the strength, the CLIP strength (with a CLIP connected) and ✕ to remove it. **The next empty row appears as soon as the last one is filled.** A LoRA whose file is missing is marked ⚠ in red; it must be switched off or replaced before the graph can run. Rows are applied top to bottom. Up to 64 rows. |
+
+The picker screen:
+
+- a **card for every LoRA** found in the loras folders (sub-folders included): preview image, name, model family, size, trigger words;
+- **filter chips by model family** (`SDXL`, `SDXL (Pony)`, `SD 1.x / 2.x`, `Flux`, `SD 3`, ..., with counts) and a **search** that needs every word you type to be found in the name, the trigger words, the frequent training tags or the family (`cel shading`, `watercolor`, `pixel`); sort by name, newest or size;
+- a **detail panel** for the selected card: preview, family and base model, **trigger words** (tap one to copy it, or **Copy all**), the **frequent training tags**, **recommended settings** (strength, sampler, steps, CFG, negative prompt), Civitai names and description, **training data** (network dim / alpha, resolution, epochs, images, clip skip), and **My notes**: trigger words, a recommended strength and a text of your own, saved to `ComfyUI/user/bart_lora_notes.json` and used before anything else. **Use this LoRA** adds it (starting at the recommended strength, if any).
+
+### Outputs
+
+| Output | Type | Meaning |
+| --- | --- | --- |
+| `model` | `MODEL` | The model with the switched-on LoRAs applied. |
+| `clip` | `CLIP` | The CLIP with them applied (nothing when no CLIP was connected). |
+| `lora_names` | `STRING` | The names of the LoRAs that were applied, without folder and extension, separated by commas (`watercolor_sdxl, anime_flux`). |
+
+### How it works
+
+Each row is applied with ComfyUI's own `load_lora_for_models`, the same call as the stock **Load LoRA**, one file after the other, so the result is that of a chain of Load LoRA nodes. A row that is switched off, or whose strengths are both 0, is not even loaded. The rows are kept as JSON in a hidden widget of the node.
+
+Where the information comes from (nothing is downloaded, and no file is ever unpickled):
+
+| Source | Gives |
+| --- | --- |
+| the **safetensors header** (kohya `ss_*` fields, `modelspec.*`) | model family and base checkpoint, training data, **frequent training tags** (`ss_tag_frequency`), title and author. Without metadata the family is guessed from the tensor names. |
+| `foo.civitai.info` (Civitai Helper) | trigger words, base model, model and version names, description, sampler / steps / CFG of the first example image |
+| `foo.json` (the A1111 LoRA tab) | `activation text` (trigger words), `preferred weight`, `negative text`, `sd version`, notes |
+| `foo.preview.png` / `foo.png` (also `.jpg`, `.jpeg`, `.webp`) | the preview image |
+| **My notes** | trigger words, strength and text you typed on the screen |
+
+Trigger words come from My notes first, then Civitai, then the A1111 `.json`; kohya's training tags are listed separately because they are not always the triggers.
+
+### Notes and limits
+
+- `.pt`, `.ckpt` and `.bin` LoRAs work, but nothing is read from them (they are pickles); only their sidecar files and your notes are shown.
+- The model family is a guess when the file has no metadata, and nothing checks it against the connected model: a LoRA for another family is applied by ComfyUI as far as its keys match, and ComfyUI logs the rest as `NOT LOADED`.
+- A LoRA replaced under the same name makes the node run again (its file's date and size are part of the cache key); the picker's list is kept for 30 seconds, **⟳** rescans.
+- Metadata is read once per file version and cached in memory; a folder of thousands of LoRAs takes a moment the first time the picker opens.
+
+---
+
 ## WAN Latent Trim Start
 
 Cuts frames off the **start** of a WAN video latent **before the VAE decode**, with the count in **pixel frames** (the unit you see in the finished video).
@@ -676,6 +737,7 @@ Wraps [OpenBMB/VoxCPM](https://github.com/OpenBMB/VoxCPM), a tokenizer-free text
 | [`13_wan_latent_trim.json`](example_workflows/13_wan_latent_trim.json) | WAN Latent Trim Start on an empty latent: no model needed, shows `removed_frames` / `frames_left` |
 | [`14_voxcpm_speak.json`](example_workflows/14_voxcpm_speak.json) | VoxCPM Model Loader → Speak (a described voice) → Save Audio; the info line. Needs the `voxcpm` package |
 | [`15_easy_ollama.json`](example_workflows/15_easy_ollama.json) | Easy Ollama: Load Image → a vision model → the answer and the debug text |
+| [`16_lora_selector.json`](example_workflows/16_lora_selector.json) | Lora Selector: Load Checkpoint → several LoRAs with switches and strengths → the names of the LoRAs in use |
 
 **`12_all_nodes.json`** has five groups; they don't depend on each other, so mute or bypass the ones you don't need (select the group's nodes, `Ctrl+M` to mute, `Ctrl+B` to bypass):
 
@@ -704,6 +766,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 | YuE2 nodes | Hugging Face (weights, once) | none | — |
 | VoxCPM nodes | Hugging Face (weights, once), ModelScope (optional denoiser) | none | the `voxcpm` package and its pinned dependencies; cloning someone's voice is on you |
 | Easy Ollama | `address` | none | your prompt and images go to that server |
+| Lora Selector | none | `/lora_selector/*` | lists the names and metadata of the LoRA files to anyone who can reach the port; `POST /notes` writes one small file in the user folder (JSON only, 64 KB, known LoRA names only) |
 
 **Directory node (Load Random Image).** The `/random_image/list`, `/pick` and `/view` routes accept a `dir` parameter with **no restriction whatsoever**: anyone who can reach ComfyUI's HTTP port (not necessarily through the graph or UI at all; a bare GET is enough) can list and read arbitrary files the ComfyUI process can access. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug an allowlist should close.
 
@@ -721,7 +784,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 
 ## Tests
 
-The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
+The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), the Lora Selector (LoRA headers and sidecars, notes, the stack, and the node against stand-ins for `comfy`), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -782,6 +845,10 @@ latenttrim/              WAN Latent Trim Start
 yue2/                    YuE2 nodes
   selection.py           pure logic: VAE choices, generate() kwargs, token budgets
   nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
+lora_selector/           Lora Selector (`LoraSelector`)
+  metadata.py            safetensors header, family guess, sidecar files, my notes (no torch)
+  selection.py           the stack of rows: parsing, checks, names output
+  nodes.py, routes.py    the node; /lora_selector/list, /info, /preview, /notes
 ollama_chat/             Easy Ollama (`OllamaChat`)
   client.py              address and settings parsing, the request, the HTTP call, the debug text (no torch)
   nodes.py               the node; IMAGE batch -> base64 JPEGs
@@ -807,6 +874,7 @@ CONTRIBUTING.md          how to add a node sub-package, and the documentation te
 - Load Random Image and the booru nodes keep their advance state in the ComfyUI process's memory (it resets on restart, then continues from the last value saved in the workflow) and don't share it between parallel ComfyUI processes.
 - The booru node can only address a limited number of positions per source (see its section), and those positions shift as new posts are uploaded.
 - The 52prompts node depends on the shape of the site's generator scripts; a rewrite outside the supported JavaScript subset needs `prompts52/jsmini.py` extended (it fails loudly).
+- The Lora Selector has not applied a real LoRA to a real model (no checkpoint was installed here); the application itself is ComfyUI's `load_lora_for_models`, driven in the same way as the stock Load LoRA.
 - Easy Ollama has been run against one small vision model; with the context left unset the server's own choice (here 262144, 33 GB) is not something the node can prevent, only report: keep `num_ctx` in the settings.
 - The VoxCPM nodes have been run only against a stand-in `voxcpm` package: no audio from the real package and weights has been produced by this pack, and the package's pinned dependencies (gradio 6, datasets 3, Python < 3.13) may not fit your ComfyUI environment.
 - The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed.

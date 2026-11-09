@@ -49,6 +49,15 @@ except Exception:
     logger.exception("comfyui-bart-nodes: YuE2 nodes failed to load, skipping them")
 
 try:
+    from .lora_selector.nodes import LoraSelector
+    from .lora_selector import routes as lora_selector_routes  # noqa: F401  registers /lora_selector
+
+    NODE_CLASS_MAPPINGS["LoraSelector"] = LoraSelector
+    NODE_DISPLAY_NAME_MAPPINGS["LoraSelector"] = "Bart's Lora Selector \U0001f39b\ufe0f"
+except Exception:
+    logger.exception("comfyui-bart-nodes: LoraSelector failed to load, skipping it")
+
+try:
     from .ollama_chat.nodes import OllamaChat
 
     NODE_CLASS_MAPPINGS["OllamaChat"] = OllamaChat

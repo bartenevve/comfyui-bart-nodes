@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-bart-nodes"
-description = "Nodes for loading images, writing prompts and video/music work. Image: random/sequential loader for any folder, touch-friendly gallery picker for the input folder, loader with an on-node crop editor, booru tag search (5 sites), Ollama anatomy-defect filter. Text: 52prompts.com generators, MiniMax H3 video prompt writer (Ollama or a Qwen/Gemma CLIP, validated, with a Generate button), Easy Ollama (text + images). Latent: WAN latent start trim. Audio: YuE2 songs, VoxCPM speech and voice cloning."
-version = "0.16.0"
+description = "Nodes for loading images, writing prompts and video/music work. Image: random/sequential loader for any folder, touch-friendly gallery picker for the input folder, loader with an on-node crop editor, booru tag search (5 sites), Ollama anatomy-defect filter. Text: 52prompts.com generators, MiniMax H3 video prompt writer (Ollama or a Qwen/Gemma CLIP, validated), Easy Ollama (text + images). Model: LoRA selector. Latent: WAN latent start trim. Audio: YuE2 songs, VoxCPM speech and voice cloning."
+version = "0.17.0"
 license = { text = "MIT License" }
 
 [project.urls]
