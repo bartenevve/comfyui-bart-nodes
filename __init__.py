@@ -49,6 +49,14 @@ except Exception:
     logger.exception("comfyui-bart-nodes: YuE2 nodes failed to load, skipping them")
 
 try:
+    from .ollama_chat.nodes import OllamaChat
+
+    NODE_CLASS_MAPPINGS["OllamaChat"] = OllamaChat
+    NODE_DISPLAY_NAME_MAPPINGS["OllamaChat"] = "Bart's Easy Ollama \U0001f999"
+except Exception:
+    logger.exception("comfyui-bart-nodes: OllamaChat failed to load, skipping it")
+
+try:
     from .voxcpm_tts.nodes import VoxCPMGenerate, VoxCPMModelLoader
 
     NODE_CLASS_MAPPINGS["VoxCPMModelLoader"] = VoxCPMModelLoader

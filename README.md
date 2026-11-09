@@ -13,6 +13,7 @@ Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch
 | [**Bart's Anatomy Defect Filter (Ollama) 🔍**](#anatomy-defect-filter) | `Image` | splits images into `passed` / `failed` by asking an Ollama **vision model** about anatomy defects | an Ollama server with a vision chat model |
 | [**Bart's Load Random Prompt (52prompts) 🎲**](#load-random-prompt-52prompts) | `Text` | outputs a random text prompt from one of 20 generators on [52prompts.com](https://52prompts.com/) | internet access |
 | [**Bart's MiniMax H3 Prompt Helper (Ollama/Clip) 🎬**](#minimax-h3-prompt) | `Text` | writes ready-to-use **MiniMax H3 video prompts** with a local LLM (Ollama, or a text-LLM CLIP inside ComfyUI); a Generate button fills the result without running the graph | an Ollama server + a chat model, or a Qwen / Gemma CLIP |
+| [**Bart's Easy Ollama 🦙**](#easy-ollama) | `Text` | the plainest **Ollama call**: address, model, prompt, optional images, a JSON of options in; the answer and a debug text out | an Ollama server (a vision model for images) |
 | [**Bart's WAN Latent Trim Start 🎞️**](#wan-latent-trim-start) | `Latent` | cuts frames off the **start** of a WAN video latent **before the VAE decode**; the count is in pixel frames | nothing beyond ComfyUI |
 | [**Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵**](#yue2-music-generation) | `Audio` | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score in between | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon slowly) |
 | [**Bart's VoxCPM Model Loader / Speak (TTS / voice clone) 🗣️**](#voxcpm-speech) | `Audio` | speaks a text with [OpenBMB VoxCPM](https://github.com/OpenBMB/VoxCPM): plain, in a **voice described in words**, or **cloned from a recording** | the `voxcpm` package and a GPU (or a lot of patience) |
@@ -447,6 +448,66 @@ The list outputs make a video node fed by `prompt` + `duration` run once per cli
 
 ---
 
+## Easy Ollama
+
+The plainest way to ask a local **Ollama** something, with or without images. Every setting is on the node, and every one can also be fed by a link.
+
+| | |
+| --- | --- |
+| **Class · category** | `OllamaChat` · `Bart's nodes/Text` |
+| **Example workflow** | [`15_easy_ollama.json`](example_workflows/15_easy_ollama.json) |
+| **Needs** | an Ollama server; for images a vision model (tested: `qwen3-vl:2b-instruct`, 1.9 GB) |
+| **Network** | outbound to `address` only (`POST /api/chat`, then a `GET /api/ps` for the debug text) |
+| **HTTP routes** | none |
+| **Verified** | against a real Ollama 0.40 and `qwen3-vl:2b-instruct`: three images through a real ComfyUI graph (Load Image ×3 → Batch Images → this node) with a `num_ctx` of 8192; six images (6520 prompt tokens, more than 6000) with `num_ctx` 8192; the same prompt with the context left unset, which made this server load the model with a context of 262144 and 33 GB. Requests with a `num_ctx` of 256 up to 1,000,000 are checked against a stand-in server to arrive exactly as written. **Not:** `num_ctx` above 8192 on a real model (the stand-in server proves the request is passed on, not that the machine can hold it), and remote or proxied servers. |
+
+### Widgets
+
+| Widget | Meaning |
+| --- | --- |
+| `address` | `localhost` (default), `192.168.1.5`, `myhost:11500` or a full `http(s)://host:port/prefix`. A bare host gets `http://` and Ollama's port 11434. No credentials, query or fragment. |
+| `model` | The model name, as `ollama list` shows it. Required. |
+| `prompt` | The text. Required. |
+| `images` (optional input) | An `IMAGE`; **every frame of a batch is one image** for the model. For several pictures join them with **Batch Images** (it resizes the later ones to the first). Each is sent as a JPEG, scaled down to a long side of 2048 px first. |
+| `settings` | A JSON object, **pre-filled with Ollama's defaults and `num_ctx: 8192`**. Anything in it is passed on as written: no range is checked, so any `num_ctx` works. Empty box = no options at all. |
+
+The default `settings`:
+
+```json
+{
+  "temperature": 0.8,
+  "top_k": 40,
+  "top_p": 0.9,
+  "min_p": 0.0,
+  "repeat_penalty": 1.1,
+  "repeat_last_n": 64,
+  "seed": -1,
+  "num_predict": -1,
+  "num_ctx": 8192
+}
+```
+
+`seed: -1` is Ollama's real default, **random** (its documentation says 0, but 0 is a *fixed* seed there: tested, the same answer every time). A random seed, or none, makes the node run on every queue; a fixed one gives the same answer for the same prompt.
+
+Keys that are not model options are lifted out of it: `think`, `keep_alive`, `format` and `system` go to the top level of the Ollama request, and `timeout` (seconds, default 900) and `image_max_side` (pixels, default 2048) steer the node. Everything else goes into Ollama's `options` (`seed`, `stop`, `num_batch`, ...).
+
+### Outputs
+
+| Output | Type | Meaning |
+| --- | --- | --- |
+| `text` | `STRING` | The model's answer (empty when something went wrong). |
+| `debug` | `STRING` | What was sent (address, model, image sizes, request size, options), the HTTP status and time, why it stopped, the prompt and answer token counts, the model's reasoning if it has any, **the server's error message**, and what the server holds in memory (`context 8192 | 2.6 GB | 100% on GPU`). Wire it into **Preview Any**. |
+
+### Notes and limits
+
+- **Errors do not stop the graph.** An unreachable server, an unknown model or a refused request give an empty `text` and an `ERROR: ...` line in `debug`. Only an empty `model` or `prompt` and a settings box that is not valid JSON are refused when the graph is queued.
+- **The context size matters.** Left unset, the server picks it: the test server loaded even this 1.7B model with a context of **262144** and took **33 GB** of memory (and then a long time). With `num_ctx: 8192` the same model took 2.6 GB and answered in 20 seconds. The debug text warns when the server chose a huge context by itself, and when the prompt filled the whole `num_ctx` (Ollama then silently cuts off its start). Each image costs roughly 1000 tokens at 768×512 with Qwen3-VL.
+- **Re-running.** With a random seed (`-1`, the default, or none) every queue asks again; with a fixed `seed`, unchanged inputs reuse the previous answer (ComfyUI's cache), and a changed seed asks again.
+- A redirect from the server is not followed, and a response over 64 MB is refused. Interrupt does not stop a request in progress.
+- Not a chat: one prompt, one answer, no history.
+
+---
+
 ## WAN Latent Trim Start
 
 Cuts frames off the **start** of a WAN video latent **before the VAE decode**, with the count in **pixel frames** (the unit you see in the finished video).
@@ -614,6 +675,7 @@ Wraps [OpenBMB/VoxCPM](https://github.com/OpenBMB/VoxCPM), a tokenizer-free text
 | [`12_all_nodes.json`](example_workflows/12_all_nodes.json) | **All nodes in one graph**, in five groups (below) |
 | [`13_wan_latent_trim.json`](example_workflows/13_wan_latent_trim.json) | WAN Latent Trim Start on an empty latent: no model needed, shows `removed_frames` / `frames_left` |
 | [`14_voxcpm_speak.json`](example_workflows/14_voxcpm_speak.json) | VoxCPM Model Loader → Speak (a described voice) → Save Audio; the info line. Needs the `voxcpm` package |
+| [`15_easy_ollama.json`](example_workflows/15_easy_ollama.json) | Easy Ollama: Load Image → a vision model → the answer and the debug text |
 
 **`12_all_nodes.json`** has five groups; they don't depend on each other, so mute or bypass the ones you don't need (select the group's nodes, `Ctrl+M` to mute, `Ctrl+B` to bypass):
 
@@ -641,6 +703,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 | WAN Latent Trim Start | none | none | — |
 | YuE2 nodes | Hugging Face (weights, once) | none | — |
 | VoxCPM nodes | Hugging Face (weights, once), ModelScope (optional denoiser) | none | the `voxcpm` package and its pinned dependencies; cloning someone's voice is on you |
+| Easy Ollama | `address` | none | your prompt and images go to that server |
 
 **Directory node (Load Random Image).** The `/random_image/list`, `/pick` and `/view` routes accept a `dir` parameter with **no restriction whatsoever**: anyone who can reach ComfyUI's HTTP port (not necessarily through the graph or UI at all; a bare GET is enough) can list and read arbitrary files the ComfyUI process can access. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug an allowlist should close.
 
@@ -658,7 +721,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 
 ## Tests
 
-The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), and the VoxCPM nodes (against a stand-in `voxcpm` package).
+The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -719,6 +782,9 @@ latenttrim/              WAN Latent Trim Start
 yue2/                    YuE2 nodes
   selection.py           pure logic: VAE choices, generate() kwargs, token budgets
   nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
+ollama_chat/             Easy Ollama (`OllamaChat`)
+  client.py              address and settings parsing, the request, the HTTP call, the debug text (no torch)
+  nodes.py               the node; IMAGE batch -> base64 JPEGs
 voxcpm_tts/              VoxCPM speech nodes (not `voxcpm/`: it must not shadow the package it wraps)
   selection.py           pure logic: presets, the (description)text prompt, generate() kwargs, a stdlib WAV writer
   nodes.py               VoxCPMModelLoader, VoxCPMGenerate; model cache, AUDIO <-> temporary WAV
@@ -741,6 +807,7 @@ CONTRIBUTING.md          how to add a node sub-package, and the documentation te
 - Load Random Image and the booru nodes keep their advance state in the ComfyUI process's memory (it resets on restart, then continues from the last value saved in the workflow) and don't share it between parallel ComfyUI processes.
 - The booru node can only address a limited number of positions per source (see its section), and those positions shift as new posts are uploaded.
 - The 52prompts node depends on the shape of the site's generator scripts; a rewrite outside the supported JavaScript subset needs `prompts52/jsmini.py` extended (it fails loudly).
+- Easy Ollama has been run against one small vision model; with the context left unset the server's own choice (here 262144, 33 GB) is not something the node can prevent, only report: keep `num_ctx` in the settings.
 - The VoxCPM nodes have been run only against a stand-in `voxcpm` package: no audio from the real package and weights has been produced by this pack, and the package's pinned dependencies (gradio 6, datasets 3, Python < 3.13) may not fit your ComfyUI environment.
 - The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed.
 - WAN Latent Trim Start has been checked against ComfyUI's own node and on empty latents, not on a real WAN generation (see its **Verified** row).
