@@ -79,6 +79,51 @@ def active(stack):
     return out
 
 
+_MODEL_FAMILIES = (
+    ("sdxl", "SDXL"), ("sd3", "SD 3"), ("flux", "Flux"), ("wan", "Wan"), ("hunyuan", "Hunyuan"),
+    ("qwen", "Qwen"), ("ltx", "LTX"), ("sd15", "SD 1.x / 2.x"), ("sd20", "SD 1.x / 2.x"), ("sd21", "SD 1.x / 2.x"),
+)
+_SD12 = {"SD 1.x", "SD 2.x", "SD 1.x / 2.x"}
+
+
+def family_from_class_name(name):
+    """The model family of a ComfyUI model class name (`SDXL`, `Flux`, `WAN21`, ...), or "" when not known."""
+    low = (name or "").lower()
+    for needle, family in _MODEL_FAMILIES:
+        if needle in low:
+            return family
+    return ""
+
+
+def compatible(lora_family, model_family):
+    """False only when both families are known and differ (Pony is SDXL; SD 1.x and 2.x are not told apart)."""
+    if not lora_family or not model_family:
+        return True
+    left = "SDXL" if lora_family.startswith("SDXL") else lora_family
+    right = "SDXL" if model_family.startswith("SDXL") else model_family
+    return left == right or (left in _SD12 and right in _SD12)
+
+
+def compatibility_warnings(rows, families, model_family):
+    """One sentence for every applied LoRA that looks like it was made for another model family."""
+    out = []
+    for row in rows:
+        family = families.get(row["name"], "")
+        if not compatible(family, model_family):
+            out.append(f"{short_name(row['name'])} looks like a {family} LoRA, but the connected model is {model_family}")
+    return out
+
+
+def trigger_words(infos):
+    """The trigger words of the LoRAs in use, in order, without repeats, as one comma separated text."""
+    seen = []
+    for info in infos:
+        for word in info.get("triggers", []):
+            if word and word not in seen:
+                seen.append(word)
+    return ", ".join(seen)
+
+
 def short_name(name):
     """`style/foo.safetensors` -> `foo`."""
     return os.path.splitext(name.replace("\\", "/").rsplit("/", 1)[-1])[0]

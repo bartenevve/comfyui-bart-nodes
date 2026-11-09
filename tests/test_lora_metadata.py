@@ -268,5 +268,32 @@ class TestStack(unittest.TestCase):
         self.assertEqual(selection.names_text([]), "")
 
 
+class TestFamilies(unittest.TestCase):
+    def test_model_class_names(self):
+        for name, want in (("SDXL", "SDXL"), ("SDXLRefiner", "SDXL"), ("SD15", "SD 1.x / 2.x"), ("SD3", "SD 3"), ("Flux", "Flux"),
+                           ("FluxInpaint", "Flux"), ("WAN21", "Wan"), ("WAN22", "Wan"), ("HunyuanVideo", "Hunyuan"),
+                           ("QwenImage", "Qwen"), ("LTXV", "LTX"), ("SomethingNew", ""), ("", ""), (None, "")):
+            self.assertEqual(selection.family_from_class_name(name), want, name)
+
+    def test_compatibility(self):
+        for lora, model in (("SDXL", "SDXL"), ("SDXL (Pony)", "SDXL"), ("SD 1.x", "SD 1.x / 2.x"), ("SD 2.x", "SD 1.x / 2.x"),
+                            ("SD 1.x / 2.x", "SD 1.x / 2.x"), ("Flux", "Flux"), ("", "Flux"), ("Flux", ""), ("", "")):
+            self.assertTrue(selection.compatible(lora, model), (lora, model))
+        for lora, model in (("Flux", "SDXL"), ("SDXL", "SD 1.x / 2.x"), ("Wan", "Flux"), ("SD 3", "SDXL")):
+            self.assertFalse(selection.compatible(lora, model), (lora, model))
+
+    def test_warnings_name_the_lora_and_both_families(self):
+        rows = [{"name": "style/a.safetensors"}, {"name": "b.safetensors"}]
+        families = {"style/a.safetensors": "Flux", "b.safetensors": "SDXL"}
+        self.assertEqual(selection.compatibility_warnings(rows, families, "SDXL"),
+                         ["a looks like a Flux LoRA, but the connected model is SDXL"])
+        self.assertEqual(selection.compatibility_warnings(rows, families, ""), [])
+
+    def test_trigger_words_are_joined_in_order_without_repeats(self):
+        infos = [{"triggers": ["a", "b"]}, {"triggers": ["b", "c", ""]}, {}]
+        self.assertEqual(selection.trigger_words(infos), "a, b, c")
+        self.assertEqual(selection.trigger_words([]), "")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -520,15 +520,16 @@ Several LoRAs on **one node**: each row has an ON/OFF switch and a strength, and
 | **Needs** | nothing beyond ComfyUI (LoRA files in its `loras` folders) |
 | **Network** | none |
 | **HTTP routes** | `/lora_selector/list`, `/info`, `/preview` (GET) and `/notes` (POST, JSON only) — only the files ComfyUI itself lists as LoRAs (see [Security](#security)) |
-| **Verified** | in a real ComfyUI with sample LoRA files (their safetensors headers, Civitai and A1111 sidecar files and preview images): the picker screen (cards, previews, family chips, search by name, trigger word, frequent tag and your own notes, both together with a chip), the detail panel, adding rows (the next row appears, a recommended strength is taken over), ON/OFF, strength with a clamp to ±100, a CLIP strength field when a CLIP is connected, a missing file marked in red, save and reload, queue-time errors (missing file, bad strength, bad JSON), saving notes, and the layout on a 375 px phone viewport. The application order, strengths and outputs are checked in unit tests against stand-ins for `comfy.sd` / `comfy.utils`. **Not:** applying a real LoRA to a real model (no checkpoint was installed, so `load_lora_for_models` itself was not run), and metadata from real downloaded files beyond the formats described below. |
+| **Verified** | in a real ComfyUI with sample LoRA files (their safetensors headers, Civitai and A1111 sidecar files and preview images): the picker screen (cards, previews, family chips, search by name, trigger word, frequent tag and your own notes, both together with a chip), the detail panel, adding rows (the next row appears, a recommended strength is taken over), ON/OFF, strength with a clamp to ±100, a CLIP strength field when a CLIP is connected, a missing file marked in red, dragging rows to reorder them (mouse and touch-style pointer events), the CLIP-strength fields following `apply_to_clip`, the run's warnings under the rows, save and reload, queue-time errors (missing file, bad strength, bad JSON), saving notes, and the layout on a 375 px phone viewport. The application is checked with **ComfyUI's real code** (`load_lora_for_models`, real LoRA files, a real `ModelPatcher` around a tiny stand-in network named like a Wan model: patched without any CLIP, the original model untouched, trigger words merged, the family warning raised) and in unit tests against stand-ins. **Not:** a real checkpoint (none was installed), and metadata from real downloaded files beyond the formats described below. |
 
 ### Widgets and inputs
 
 | | Meaning |
 | --- | --- |
 | `model` (required input) | The diffusion model the LoRAs are applied to. |
-| `clip` (optional input) | The CLIP model. Connect it to apply the LoRAs to it too and to get a **CLIP strength** field on every row (empty = the same as the model strength). Without it the `clip` output is empty. |
-| the rows | **＋ Add LoRA…** opens the picker. A filled row has a switch (**ON** / **OFF**), the LoRA's name (tap it to pick another), the strength, the CLIP strength (with a CLIP connected) and ✕ to remove it. **The next empty row appears as soon as the last one is filled.** A LoRA whose file is missing is marked ⚠ in red; it must be switched off or replaced before the graph can run. Rows are applied top to bottom. Up to 64 rows. |
+| `clip` (optional input) | The CLIP model. Connect it to apply the LoRAs to it too and to get a **CLIP strength** field on every row (empty = the same as the model strength). **Without it the node works on the model alone** and the `clip` output is empty (it is meant for models that have no CLIP of their own to patch). |
+| `apply_to_clip` | On by default. **Off = the LoRAs go to the model only and a connected CLIP passes through untouched**, which is what most Flux, Wan and other video LoRAs want (the CLIP strength fields are hidden then). If a LoRA cannot be applied to the CLIP at all (an error, not just keys that do not match), the model still gets it and the run says so. |
+| the rows | **＋ Add LoRA…** opens the picker. A filled row has a **⋮⋮ handle (drag it to change the order**; mouse, finger or pen), a switch (**ON** / **OFF**), the LoRA's name (tap it to pick another), the strength, the CLIP strength (with a CLIP connected) and ✕ to remove it. **The next empty row appears as soon as the last one is filled.** A LoRA whose file is missing is marked ⚠ in red; it must be switched off or replaced before the graph can run. Rows are applied top to bottom. Up to 64 rows. |
 
 The picker screen:
 
@@ -543,10 +544,13 @@ The picker screen:
 | `model` | `MODEL` | The model with the switched-on LoRAs applied. |
 | `clip` | `CLIP` | The CLIP with them applied (nothing when no CLIP was connected). |
 | `lora_names` | `STRING` | The names of the LoRAs that were applied, without folder and extension, separated by commas (`watercolor_sdxl, anime_flux`). |
+| `trigger_words` | `STRING` | The trigger words of those LoRAs (your notes, then Civitai, then the A1111 `.json`; kohya's training tags are not included), in order, without repeats, separated by commas: join it with your prompt (for example with **Simple concatenate**). Empty when none are known. |
 
 ### How it works
 
 Each row is applied with ComfyUI's own `load_lora_for_models`, the same call as the stock **Load LoRA**, one file after the other, so the result is that of a chain of Load LoRA nodes. A row that is switched off, or whose strengths are both 0, is not even loaded. The rows are kept as JSON in a hidden widget of the node.
+
+**Compatibility warning.** The family of every applied LoRA (from its metadata or tensor names) is compared with the family of the connected model (from its class: SDXL, SD 1.x / 2.x, SD 3, Flux, Wan, Hunyuan, Qwen, LTX). When both are known and differ, the node writes `anime_flux looks like a Flux LoRA, but the connected model is SDXL` under its rows (and to the ComfyUI log). Pony counts as SDXL; SD 1.x and 2.x are not told apart; an unknown family on either side gives no warning. It is a hint, nothing is blocked.
 
 Where the information comes from (nothing is downloaded, and no file is ever unpickled):
 
@@ -563,7 +567,7 @@ Trigger words come from My notes first, then Civitai, then the A1111 `.json`; ko
 ### Notes and limits
 
 - `.pt`, `.ckpt` and `.bin` LoRAs work, but nothing is read from them (they are pickles); only their sidecar files and your notes are shown.
-- The model family is a guess when the file has no metadata, and nothing checks it against the connected model: a LoRA for another family is applied by ComfyUI as far as its keys match, and ComfyUI logs the rest as `NOT LOADED`.
+- The model family is a guess when the file has no metadata. A LoRA for another family is only *warned about*, not blocked: ComfyUI applies it as far as its keys match and logs the rest as `NOT LOADED`.
 - A LoRA replaced under the same name makes the node run again (its file's date and size are part of the cache key); the picker's list is kept for 30 seconds, **⟳** rescans.
 - Metadata is read once per file version and cached in memory; a folder of thousands of LoRAs takes a moment the first time the picker opens.
 
@@ -874,7 +878,7 @@ CONTRIBUTING.md          how to add a node sub-package, and the documentation te
 - Load Random Image and the booru nodes keep their advance state in the ComfyUI process's memory (it resets on restart, then continues from the last value saved in the workflow) and don't share it between parallel ComfyUI processes.
 - The booru node can only address a limited number of positions per source (see its section), and those positions shift as new posts are uploaded.
 - The 52prompts node depends on the shape of the site's generator scripts; a rewrite outside the supported JavaScript subset needs `prompts52/jsmini.py` extended (it fails loudly).
-- The Lora Selector has not applied a real LoRA to a real model (no checkpoint was installed here); the application itself is ComfyUI's `load_lora_for_models`, driven in the same way as the stock Load LoRA.
+- The Lora Selector has been run with ComfyUI's real LoRA code on a tiny stand-in network, not on a real checkpoint (none was installed here); the application itself is ComfyUI's `load_lora_for_models`, driven in the same way as the stock Load LoRA.
 - Easy Ollama has been run against one small vision model; with the context left unset the server's own choice (here 262144, 33 GB) is not something the node can prevent, only report: keep `num_ctx` in the settings.
 - The VoxCPM nodes have been run only against a stand-in `voxcpm` package: no audio from the real package and weights has been produced by this pack, and the package's pinned dependencies (gradio 6, datasets 3, Python < 3.13) may not fit your ComfyUI environment.
 - The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed.

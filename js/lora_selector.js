@@ -106,10 +106,13 @@ app.registerExtension({
             node.widgets.splice(node.widgets.indexOf(domWidget), 1);
             node.widgets.splice(node.widgets.indexOf(store) + 1, 0, domWidget);
 
+            // the CLIP strength field shows only when there is a CLIP and the LoRAs are meant for it
             const clipLinked = () => {
                 const input = (node.inputs || []).find((i) => i.name === "clip");
-                return !!input && input.link != null;
+                const toggle = (node.widgets || []).find((w) => w.name === "apply_to_clip");
+                return !!input && input.link != null && (!toggle || toggle.value !== false);
             };
+            let notes = []; // what the last run said about the LoRAs (compatibility, a CLIP they did not fit)
 
             function commit() {
                 store.value = JSON.stringify(toStack(rows));
@@ -134,6 +137,50 @@ app.registerExtension({
                 });
             }
 
+            // Drag a row by its handle to change the order (mouse, finger or pen). The dragged row follows the
+            // pointer, a line shows where it will land, and the rows move when it is dropped.
+            function attachDrag(handle, line, index) {
+                handle.addEventListener("pointerdown", (event) => {
+                    if (event.button !== undefined && event.button !== 0) return;
+                    event.preventDefault();
+                    const lines = [...box.children].slice(0, toStack(rows).length);
+                    if (lines.length < 2) return;
+                    handle.setPointerCapture(event.pointerId);
+                    const centers = lines.map((el) => {
+                        const rect = el.getBoundingClientRect();
+                        return rect.top + rect.height / 2;
+                    });
+                    const startY = event.clientY;
+                    let target = index;
+                    line.style.opacity = "0.6";
+                    line.style.position = "relative";
+                    line.style.zIndex = "5";
+                    const move = (e) => {
+                        const dy = e.clientY - startY;
+                        line.style.transform = `translateY(${dy}px)`;
+                        const probe = centers[index] + dy;
+                        target = centers.reduce((best, c, i) => (Math.abs(c - probe) < Math.abs(centers[best] - probe) ? i : best), index);
+                        lines.forEach((el, i) => {
+                            el.style.boxShadow = i === target && target !== index ? (target > index ? "0 3px 0 #4aa3ff" : "0 -3px 0 #4aa3ff") : "";
+                        });
+                    };
+                    const finish = (e) => {
+                        handle.removeEventListener("pointermove", move);
+                        handle.removeEventListener("pointerup", finish);
+                        handle.removeEventListener("pointercancel", finish);
+                        if (e.type === "pointerup" && target !== index) {
+                            const [moved] = rows.splice(index, 1);
+                            rows.splice(target, 0, moved);
+                            commit();
+                        }
+                        render();
+                    };
+                    handle.addEventListener("pointermove", move);
+                    handle.addEventListener("pointerup", finish);
+                    handle.addEventListener("pointercancel", finish);
+                });
+            }
+
             function makeRow(row, index) {
                 const line = document.createElement("div");
                 line.style.cssText = "display:flex;gap:6px;align-items:center;";
@@ -143,6 +190,12 @@ app.registerExtension({
                     line.appendChild(add);
                     return line;
                 }
+                const handle = document.createElement("div");
+                handle.textContent = "⋮⋮";
+                handle.title = "Drag to change the order";
+                handle.style.cssText = "min-width:22px;min-height:44px;display:flex;align-items:center;justify-content:center;" +
+                    "cursor:grab;opacity:.55;touch-action:none;user-select:none;-webkit-user-select:none;font-size:16px;";
+                attachDrag(handle, line, index);
                 const toggle = button(row.enabled ? "ON" : "OFF", "min-width:52px;padding:0 6px;font-weight:700;");
                 toggle.style.background = row.enabled ? "#1d6f3a" : "#3a3a3c";
                 toggle.style.borderColor = row.enabled ? "#4ad37a" : "#555";
@@ -168,7 +221,7 @@ app.registerExtension({
                     strength.value = row.strength_model;
                     commit();
                 });
-                line.append(toggle, name, strength);
+                line.append(handle, toggle, name, strength);
                 if (clipLinked()) {
                     const clip = numberInput("= model");
                     clip.value = row.strength_clip === null ? "" : row.strength_clip;
@@ -206,6 +259,12 @@ app.registerExtension({
                     note.textContent = `${used} LoRA${used === 1 ? "" : "s"} on`;
                     box.appendChild(note);
                 }
+                for (const line of notes) {
+                    const warning = document.createElement("div");
+                    warning.style.cssText = "font-size:12px;color:#f0b44c;padding:0 4px;";
+                    warning.textContent = "⚠ " + line;
+                    box.appendChild(warning);
+                }
                 node.setSize([Math.max(node.size[0], 420), Math.max(node.size[1], node.computeSize()[1])]);
                 app.graph.setDirtyCanvas(true, true);
             }
@@ -228,6 +287,19 @@ app.registerExtension({
                 return out;
             };
 
+            node.loraSelectorNotes = (lines) => {
+                notes = Array.isArray(lines) ? lines.filter((l) => typeof l === "string") : [];
+                render();
+            };
+            const toggleWidget = (node.widgets || []).find((w) => w.name === "apply_to_clip");
+            if (toggleWidget) {
+                const original = toggleWidget.callback;
+                toggleWidget.callback = function () {
+                    const out = original ? original.apply(this, arguments) : undefined;
+                    render();
+                    return out;
+                };
+            }
             node.loraSelectorRestore = () => {
                 rows = fromStack(store.value);
                 render();
@@ -236,6 +308,13 @@ app.registerExtension({
             node.setSize([Math.max(node.size[0], 420), node.size[1]]);
             node.loraSelectorRestore();
             return result;
+        };
+
+        // what the run said about the LoRAs (a LoRA made for another model family, a CLIP it did not fit)
+        const onExecuted = nodeType.prototype.onExecuted;
+        nodeType.prototype.onExecuted = function (message) {
+            if (onExecuted) onExecuted.apply(this, arguments);
+            if (this.loraSelectorNotes) this.loraSelectorNotes(message && message.notes);
         };
 
         // a loaded workflow applies widgets_values directly, bypassing callbacks
