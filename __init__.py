@@ -49,6 +49,14 @@ except Exception:
     logger.exception("comfyui-bart-nodes: YuE2 nodes failed to load, skipping them")
 
 try:
+    from .format_detector.nodes import FormatDetector
+
+    NODE_CLASS_MAPPINGS["FormatDetector"] = FormatDetector
+    NODE_DISPLAY_NAME_MAPPINGS["FormatDetector"] = "Bart's Format Detector \U0001f4d0"
+except Exception:
+    logger.exception("comfyui-bart-nodes: FormatDetector failed to load, skipping it")
+
+try:
     # a V3 node (ComfyUI's own dynamic "autogrow" inputs): older ComfyUI versions lack it and skip only this node
     from .simple_concat.nodes import SimpleConcatenate
 

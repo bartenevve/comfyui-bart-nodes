@@ -9,6 +9,7 @@ Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch
 | [**Bart's Load Random Image 🎲**](#load-random-image) | `Image` | loads an image from **any folder** on disk: by hand, at random, or the next one on every run | nothing beyond ComfyUI |
 | [**Bart's Image Picker (input folder) 🖼️**](#image-picker) | `Image` | picks an image from ComfyUI's input folder through a **full-screen thumbnail gallery that works on touch screens**; also a **seeded random** or **sequential** pick from a folder | nothing beyond ComfyUI |
 | [**Bart's Smart Load Image (Crop) ✂️**](#smart-load-image) | `Image` | loads an image and lets you **crop it on the node**; only the selected part is output | nothing beyond ComfyUI |
+| [**Bart's Format Detector 📐**](#format-detector) | `Image` | picks a **video format** (from a list, or the one nearest to an image), gives **width and height** for a number of megapixels, and crops the image to fill the frame around its centre | nothing beyond ComfyUI |
 | [**Bart's Load Random Booru Image 🎲**](#load-random-booru-image) | `Image` | pulls a post from a **booru tag search** (Gelbooru, yande.re, Konachan, Safebooru, Xbooru) | internet access |
 | [**Bart's Anatomy Defect Filter (Ollama) 🔍**](#anatomy-defect-filter) | `Image` | splits images into `passed` / `failed` by asking an Ollama **vision model** about anatomy defects | an Ollama server with a vision chat model |
 | [**Bart's Load Random Prompt (52prompts) 🎲**](#load-random-prompt-52prompts) | `Text` | outputs a random text prompt from one of 20 generators on [52prompts.com](https://52prompts.com/) | internet access |
@@ -189,6 +190,47 @@ The crop is stored as the four pixel widgets and applied on the server **after**
 - Upload takes image files only (PNG, JPEG, WebP, BMP, GIF); anything else is refused with a message under the preview.
 - The editor shows the crop widgets' own values. If you link a crop number from another node, the link wins when the graph runs, but the preview box keeps showing the widget's value.
 - Files outside ComfyUI's `input` folder: use [Load Random Image](#load-random-image) (an arbitrary directory, no crop).
+
+---
+
+## Format Detector
+
+Picks a video format and the frame size for a number of megapixels, and cuts the image to fill that frame: **no bars, no stretching**. Made with MiniMax H3's canvas in mind (sides in multiples of 32, 1344 × 768 at its default size).
+
+| | |
+| --- | --- |
+| **Class · category** | `FormatDetector` · `Bart's nodes/Image` |
+| **Example workflow** | [`18_format_detector.json`](example_workflows/18_format_detector.json) |
+| **Needs** | nothing beyond ComfyUI |
+| **Network** | none |
+| **HTTP routes** | none |
+| **Verified** | in a real ComfyUI through its API and frontend: auto, a chosen format, a custom ratio, the H3 limit with its note, bad input refused at queue time, a square picture cut to 16:9 (looked at: centred, round circles stay round, 1344 × 768), the example run. The arithmetic is unit-tested for every format at many sizes. |
+
+### Widgets and inputs
+
+| | Meaning |
+| --- | --- |
+| `image` (optional input) | The picture to fit. Every frame of a batch is cut and scaled the same way; without it the node only works out the size. |
+| `format` | `auto` (default), or one of **16:9, 9:16, 4:3, 3:4, 1:1, 21:9, 9:21, 3:2, 2:3, 5:4, 4:5, 2:1, 1:2**, or `custom`. **auto** takes the format whose proportions are nearest to the image (nearest in the logarithm of the ratio, so 2:1 and 1:2 are equally far from a square); 16:9 when no image is connected. The six formats MiniMax H3 Prompt knows (16:9, 9:16, 1:1, 4:3, 3:4, 21:9) are all in the list. |
+| `custom_ratio` | Used only with `format = custom`: `16:10`, `16/10`, `16x10` or a decimal such as `1.85` (between 1:20 and 20:1). |
+| `megapixels` | The area of the frame, as a number (0.05 to 64). **1.03** (default) is H3's own canvas, 768 × 1344 pixels. |
+| `limit_h3` | On by default: the frame stays within H3's 768 × 1344 pixels, so a larger `megapixels` is cut down to it (and `info` says so). Switch it off for other models. |
+
+### Outputs
+
+| Output | Type | Meaning |
+| --- | --- | --- |
+| `width`, `height` | `INT` | The frame, **both sides multiples of 32** (what H3 needs). Of the pairs of multiples of 32 near the asked area, the one that keeps the format's proportions best is taken (16:9 at 1.03 MP is 1344 × 768, 9:16 is 768 × 1344, 1:1 is 1024 × 1024, or 992 × 992 under the limit). |
+| `image` | `IMAGE` | The input cut around its centre to the frame's proportions (the largest such part: only the surplus on the sides, or top and bottom, is removed, equally on both) and scaled to width × height with an anti-aliased bicubic. Nothing when no image was connected. |
+| `aspect` | `STRING` | The format that was used, such as `16:9` (a custom ratio as `5:3`). |
+| `ratio` | `FLOAT` | width / height of that format. |
+| `info` | `STRING` | What was decided: the format and why, the size and its megapixels, how much of the image was cropped, and a note when the H3 limit changed the size. |
+
+### Notes and limits
+
+- The frame is a whole number of 32-pixel steps, so it is a hair off the exact format (1344 × 768 is 1.75:1, not 16:9 = 1.78:1). The image is cut to the **frame's** proportions, so a perfect 16:9 picture loses about 2 % at the sides rather than being squeezed. `info` shows the share that was cut.
+- The cut is always at the **centre**: a head near the top of a tall picture can lose some of its top when it is fitted to a wide format. There is no crop offset yet.
+- A small picture is scaled up (no sharpening is added); a batch is cut by the proportions of its own frames, which are the same within a batch.
 
 ---
 
@@ -519,6 +561,7 @@ Several LoRAs on **one node**: each row has an ON/OFF switch and a strength, and
 | **Class · category** | `LoraSelector` · `Bart's nodes/Model` |
 | **Example workflow** | [`16_lora_selector.json`](example_workflows/16_lora_selector.json) |
 | [`17_simple_concatenate.json`](example_workflows/17_simple_concatenate.json) | Simple concatenate: two texts and a number joined into one prompt |
+| [`18_format_detector.json`](example_workflows/18_format_detector.json) | Format Detector: Load Image → the nearest video format → the cropped image, width, height and the info text |
 | **Needs** | nothing beyond ComfyUI (LoRA files in its `loras` folders) |
 | **Network** | none |
 | **HTTP routes** | `/lora_selector/list`, `/info`, `/preview` (GET) and `/notes` (POST, JSON only) — only the files ComfyUI itself lists as LoRAs (see [Security](#security)) |
@@ -808,6 +851,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 | Easy Ollama | `address` | none | your prompt and images go to that server |
 | Lora Selector | none | `/lora_selector/*` | lists the names and metadata of the LoRA files to anyone who can reach the port; `POST /notes` writes one small file in the user folder (JSON only, 64 KB, known LoRA names only) |
 | Simple concatenate | none | none | — |
+| Format Detector | none | none | — |
 
 **Directory node (Load Random Image).** The `/random_image/list`, `/pick` and `/view` routes accept a `dir` parameter with **no restriction whatsoever**: anyone who can reach ComfyUI's HTTP port (not necessarily through the graph or UI at all; a bare GET is enough) can list and read arbitrary files the ComfyUI process can access. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug an allowlist should close.
 
@@ -825,7 +869,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 
 ## Tests
 
-The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), Simple concatenate (the text conversion and joining), the Lora Selector (LoRA headers and sidecars, notes, the stack, and the node against stand-ins for `comfy`), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
+The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), Format Detector (formats, sizes for every format at many megapixel values, the crop box, the node against real tensors), Simple concatenate (the text conversion and joining), the Lora Selector (LoRA headers and sidecars, notes, the stack, and the node against stand-ins for `comfy`), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -886,6 +930,9 @@ latenttrim/              WAN Latent Trim Start
 yue2/                    YuE2 nodes
   selection.py           pure logic: VAE choices, generate() kwargs, token budgets
   nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
+format_detector/          Format Detector (`FormatDetector`)
+  selection.py           formats, the nearest-format search, the size for a number of megapixels, the crop box (no torch)
+  nodes.py               the node; crops and scales the IMAGE with torch
 simple_concat/            Simple concatenate (`BartSimpleConcatenate`, a V3 node with autogrow inputs)
   selection.py           turning values into text, the separator escapes, joining (no ComfyUI)
   nodes.py               the node
