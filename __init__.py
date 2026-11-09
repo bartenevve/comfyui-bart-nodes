@@ -49,6 +49,16 @@ except Exception:
     logger.exception("comfyui-bart-nodes: YuE2 nodes failed to load, skipping them")
 
 try:
+    from .voxcpm_tts.nodes import VoxCPMGenerate, VoxCPMModelLoader
+
+    NODE_CLASS_MAPPINGS["VoxCPMModelLoader"] = VoxCPMModelLoader
+    NODE_CLASS_MAPPINGS["VoxCPMGenerate"] = VoxCPMGenerate
+    NODE_DISPLAY_NAME_MAPPINGS["VoxCPMModelLoader"] = "Bart's VoxCPM Model Loader \U0001f5e3\ufe0f"
+    NODE_DISPLAY_NAME_MAPPINGS["VoxCPMGenerate"] = "Bart's VoxCPM Speak (TTS / voice clone) \U0001f5e3\ufe0f"
+except Exception:
+    logger.exception("comfyui-bart-nodes: VoxCPM nodes failed to load, skipping them")
+
+try:
     from .anatomy.nodes import AnatomyDefectFilter
 
     NODE_CLASS_MAPPINGS["AnatomyDefectFilter"] = AnatomyDefectFilter

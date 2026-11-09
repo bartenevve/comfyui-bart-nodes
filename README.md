@@ -15,6 +15,7 @@ Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch
 | [**Bart's MiniMax H3 Prompt Helper (Ollama/Clip) 🎬**](#minimax-h3-prompt) | `Text` | writes ready-to-use **MiniMax H3 video prompts** with a local LLM (Ollama, or a text-LLM CLIP inside ComfyUI); a Generate button fills the result without running the graph | an Ollama server + a chat model, or a Qwen / Gemma CLIP |
 | [**Bart's WAN Latent Trim Start 🎞️**](#wan-latent-trim-start) | `Latent` | cuts frames off the **start** of a WAN video latent **before the VAE decode**; the count is in pixel frames | nothing beyond ComfyUI |
 | [**Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵**](#yue2-music-generation) | `Audio` | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score in between | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon slowly) |
+| [**Bart's VoxCPM Model Loader / Speak (TTS / voice clone) 🗣️**](#voxcpm-speech) | `Audio` | speaks a text with [OpenBMB VoxCPM](https://github.com/OpenBMB/VoxCPM): plain, in a **voice described in words**, or **cloned from a recording** | the `voxcpm` package and a GPU (or a lot of patience) |
 
 Every section below follows the same layout: a facts table, **Widgets**, **Outputs**, **How it works**, **Notes and limits**. The pack-wide parts are at the end: [Example workflows](#example-workflows), [Security](#security), [Tests](#tests), [Files](#files), [Known limitations](#known-limitations).
 
@@ -546,6 +547,53 @@ yue2 has no separate cover/edit entry points: both are a `pipeline(...)` call wi
 
 ---
 
+## VoxCPM Speech
+
+Wraps [OpenBMB/VoxCPM](https://github.com/OpenBMB/VoxCPM), a tokenizer-free text-to-speech model: text in, **speech** out, with three ways to choose the voice. Two nodes: a loader and a speaker.
+
+| | |
+| --- | --- |
+| **Class · category** | `VoxCPMModelLoader`, `VoxCPMGenerate` · `Bart's nodes/Audio` |
+| **Example workflow** | [`14_voxcpm_speak.json`](example_workflows/14_voxcpm_speak.json) |
+| **Needs** | the **`voxcpm` package** (`pip install voxcpm`; Python 3.10-3.12, torch ≥ 2.5; it also pulls in gradio 6, datasets 3, funasr, modelscope, ...: consider a separate environment) and hardware: upstream quotes ~8 GB of VRAM for VoxCPM2 (~6 GB for 1.5, ~5 GB for 0.5B) and a real-time factor of ~0.3 on an RTX 4090 |
+| **Network** | only the one-time weight download from Hugging Face (and, with `load_denoiser`, the ZipEnhancer model from ModelScope) |
+| **HTTP routes** | none |
+| **Verified** | the nodes inside a real ComfyUI with a stand-in `voxcpm` package (registered, queued, the not-installed message, empty text refused at queue time) and in unit tests against the upstream `generate()` signature (read from its source). **Not:** the real package and weights: no audio from a real VoxCPM model has been produced by this pack, so speed, memory and voice quality are the upstream's claims. |
+
+### Widgets
+
+| Node | Widget | Meaning |
+| --- | --- | --- |
+| Model Loader | `model` | `openbmb/VoxCPM2` (2B, 30 languages, 48 kHz, voice design and reference cloning), `openbmb/VoxCPM1.5` (zh / en, 44.1 kHz) or `openbmb/VoxCPM-0.5B` (zh / en, 16 kHz); weights download on first use. A checkpoint folder (with its `config.json`) put in `ComfyUI/models/voxcpm/` shows up as `local: <folder>`. |
+| Model Loader | `device` | `auto` (CUDA, else Apple MPS, else CPU), `cuda`, `mps`, `cpu`. The loaded model is cached in memory keyed by all its load options. |
+| Model Loader | `optimize` | `torch.compile` plus a warm-up run (upstream's default). Off here: it helps on CUDA but is slow to start and fragile elsewhere. |
+| Model Loader | `load_denoiser`, `local_files_only` | Also load the ZipEnhancer noise suppressor (needed by `denoise`); never touch the network. |
+| Speak | `text` | What to say (line breaks become spaces). |
+| Speak | `voice_description` | **Voice design** (VoxCPM2): a description in words, `A young woman, gentle and sweet voice`, which the node puts in parentheses in front of the text, as upstream expects. With a reference audio it steers the *style* of the cloned voice (`slightly faster, cheerful tone`). Parentheses inside it are dropped. Results vary between runs: try 1-3 seeds. |
+| Speak | `reference_audio` | **Controllable cloning** (VoxCPM2 only): the voice of this clip. Any `AUDIO` (Load Audio, a recorder, ...); it is mixed to mono and handed over as a temporary WAV. |
+| Speak | `prompt_audio` + `prompt_text` | **Continuation cloning** (every model): a clip and its **exact transcript**; the speech continues from it, keeping timbre, rhythm and style. Both or neither. With both this and `reference_audio` it is upstream's "ultimate cloning" (use the same clip for both for the closest likeness). |
+| Speak | `seed` | With `control after generate` as usual; the same seed repeats the same take. |
+| Speak | `cfg_value`, `inference_timesteps` | Guidance scale (2.0) and diffusion steps (10): more steps, slower and a little cleaner. |
+| Speak | `normalize`, `denoise` | Text normalisation (numbers, dates; needs `wetext`), and denoising of the reference / prompt clips (needs `load_denoiser`). |
+| Speak | `max_len`, `retry_badcase`, `retry_badcase_max_times`, `retry_badcase_ratio_threshold` | Token cap, and the retry loop for takes whose audio is too long for the text. |
+
+### Outputs
+
+| Node | Output | Type | Meaning |
+| --- | --- | --- | --- |
+| Model Loader | `model` | `VOXCPM_MODEL` | Feeds Speak. |
+| Speak | `audio` | `AUDIO` | Mono, at the model's rate (48 / 44.1 / 16 kHz): into **Save Audio** or **Preview Audio**. |
+| Speak | `info` | `STRING` | Which mode ran, the model, the length and the seed. |
+
+### Notes and limits
+
+- **Which mode runs** follows from what is connected: nothing = plain speech; a `voice_description` = voice design; `reference_audio` = controllable cloning; `prompt_audio` = continuation; both = ultimate cloning. VoxCPM 1.5 and 0.5B cannot do voice design or reference cloning: the node passes the upstream error on ("reference_wav_path is only supported with VoxCPM2 models").
+- **License and misuse.** The code and weights are Apache-2.0. Upstream states that using voice cloning for impersonation, fraud or disinformation is strictly forbidden and asks you to label AI-generated speech. Only clone voices you have the right to use.
+- **Interrupt** does not stop a generation in progress (one blocking call); it ends with the audio.
+- A text is one generation, capped by `max_len` tokens: for a minutes-long script, speak it paragraph by paragraph rather than raising `max_len`.
+
+---
+
 ## Example workflows
 
 `example_workflows/` holds a ready-to-load graph for every node, plus one with **all of them**. ComfyUI lists them itself under **Templates → comfyui-bart-nodes**, or drag a `.json` onto the canvas. Each has a Note explaining what to set; the image examples that read a folder ship with the placeholder `directory` `/path/to/your/images`, which you must point at a real folder before running.
@@ -565,6 +613,7 @@ yue2 has no separate cover/edit entry points: both are a `pipeline(...)` call wi
 | [`11_image_picker.json`](example_workflows/11_image_picker.json) | Image Picker: touch-friendly gallery, preview + width / height |
 | [`12_all_nodes.json`](example_workflows/12_all_nodes.json) | **All nodes in one graph**, in five groups (below) |
 | [`13_wan_latent_trim.json`](example_workflows/13_wan_latent_trim.json) | WAN Latent Trim Start on an empty latent: no model needed, shows `removed_frames` / `frames_left` |
+| [`14_voxcpm_speak.json`](example_workflows/14_voxcpm_speak.json) | VoxCPM Model Loader → Speak (a described voice) → Save Audio; the info line. Needs the `voxcpm` package |
 
 **`12_all_nodes.json`** has five groups; they don't depend on each other, so mute or bypass the ones you don't need (select the group's nodes, `Ctrl+M` to mute, `Ctrl+B` to bypass):
 
@@ -591,6 +640,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 | MiniMax H3 Prompt | `ollama_url` | `POST /minimax_h3/generate` | the route takes `ollama_url` from the caller |
 | WAN Latent Trim Start | none | none | — |
 | YuE2 nodes | Hugging Face (weights, once) | none | — |
+| VoxCPM nodes | Hugging Face (weights, once), ModelScope (optional denoiser) | none | the `voxcpm` package and its pinned dependencies; cloning someone's voice is on you |
 
 **Directory node (Load Random Image).** The `/random_image/list`, `/pick` and `/view` routes accept a `dir` parameter with **no restriction whatsoever**: anyone who can reach ComfyUI's HTTP port (not necessarily through the graph or UI at all; a bare GET is enough) can list and read arbitrary files the ComfyUI process can access. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug an allowlist should close.
 
@@ -608,7 +658,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 
 ## Tests
 
-The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server).
+The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), and the VoxCPM nodes (against a stand-in `voxcpm` package).
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -669,6 +719,9 @@ latenttrim/              WAN Latent Trim Start
 yue2/                    YuE2 nodes
   selection.py           pure logic: VAE choices, generate() kwargs, token budgets
   nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
+voxcpm_tts/              VoxCPM speech nodes (not `voxcpm/`: it must not shadow the package it wraps)
+  selection.py           pure logic: presets, the (description)text prompt, generate() kwargs, a stdlib WAV writer
+  nodes.py               VoxCPMModelLoader, VoxCPMGenerate; model cache, AUDIO <-> temporary WAV
 js/                      frontend, one file per node (WEB_DIRECTORY)
   random_image.js        file dropdown, randomize button, drag & drop, preview
   image_picker.js        Image Picker UI: preview, Choose / ◀ ▶ / Upload buttons
@@ -688,6 +741,7 @@ CONTRIBUTING.md          how to add a node sub-package, and the documentation te
 - Load Random Image and the booru nodes keep their advance state in the ComfyUI process's memory (it resets on restart, then continues from the last value saved in the workflow) and don't share it between parallel ComfyUI processes.
 - The booru node can only address a limited number of positions per source (see its section), and those positions shift as new posts are uploaded.
 - The 52prompts node depends on the shape of the site's generator scripts; a rewrite outside the supported JavaScript subset needs `prompts52/jsmini.py` extended (it fails loudly).
+- The VoxCPM nodes have been run only against a stand-in `voxcpm` package: no audio from the real package and weights has been produced by this pack, and the package's pinned dependencies (gradio 6, datasets 3, Python < 3.13) may not fit your ComfyUI environment.
 - The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed.
 - WAN Latent Trim Start has been checked against ComfyUI's own node and on empty latents, not on a real WAN generation (see its **Verified** row).
 - The anatomy filter's judgement quality depends entirely on the vision model you pick; it has been exercised on a few synthetic images only. Calibrate on your own.
