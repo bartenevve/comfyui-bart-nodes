@@ -49,6 +49,15 @@ except Exception:
     logger.exception("comfyui-bart-nodes: YuE2 nodes failed to load, skipping them")
 
 try:
+    # a V3 node (ComfyUI's own dynamic "autogrow" inputs): older ComfyUI versions lack it and skip only this node
+    from .simple_concat.nodes import SimpleConcatenate
+
+    NODE_CLASS_MAPPINGS["BartSimpleConcatenate"] = SimpleConcatenate
+    NODE_DISPLAY_NAME_MAPPINGS["BartSimpleConcatenate"] = "Bart's Simple concatenate \U0001f517"
+except Exception:
+    logger.exception("comfyui-bart-nodes: Simple concatenate failed to load (needs a ComfyUI with dynamic inputs), skipping it")
+
+try:
     from .lora_selector.nodes import LoraSelector
     from .lora_selector import routes as lora_selector_routes  # noqa: F401  registers /lora_selector
 

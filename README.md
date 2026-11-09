@@ -14,6 +14,7 @@ Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch
 | [**Bart's Load Random Prompt (52prompts) 🎲**](#load-random-prompt-52prompts) | `Text` | outputs a random text prompt from one of 20 generators on [52prompts.com](https://52prompts.com/) | internet access |
 | [**Bart's MiniMax H3 Prompt Helper (Ollama/Clip) 🎬**](#minimax-h3-prompt) | `Text` | writes ready-to-use **MiniMax H3 video prompts** with a local LLM (Ollama, or a text-LLM CLIP inside ComfyUI); a Generate button fills the result without running the graph | an Ollama server + a chat model, or a Qwen / Gemma CLIP |
 | [**Bart's Easy Ollama 🦙**](#easy-ollama) | `Text` | the plainest **Ollama call**: address, model, prompt, optional images, a JSON of options in; the answer and a debug text out | an Ollama server (a vision model for images) |
+| [**Bart's Simple concatenate 🔗**](#simple-concatenate) | `Text` | joins **any number of inputs** (text, numbers, ...) into one text; a new input appears as the last one is connected; the separator is the only setting | a ComfyUI with dynamic inputs |
 | [**Bart's Lora Selector 🎛️**](#lora-selector) | `Model` | **several LoRAs on one node**, each with a switch and a strength, chosen on a screen that shows trigger words, model family and recommended settings, with filter and search | nothing beyond ComfyUI |
 | [**Bart's WAN Latent Trim Start 🎞️**](#wan-latent-trim-start) | `Latent` | cuts frames off the **start** of a WAN video latent **before the VAE decode**; the count is in pixel frames | nothing beyond ComfyUI |
 | [**Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵**](#yue2-music-generation) | `Audio` | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score in between | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon slowly) |
@@ -517,6 +518,7 @@ Several LoRAs on **one node**: each row has an ON/OFF switch and a strength, and
 | --- | --- |
 | **Class · category** | `LoraSelector` · `Bart's nodes/Model` |
 | **Example workflow** | [`16_lora_selector.json`](example_workflows/16_lora_selector.json) |
+| [`17_simple_concatenate.json`](example_workflows/17_simple_concatenate.json) | Simple concatenate: two texts and a number joined into one prompt |
 | **Needs** | nothing beyond ComfyUI (LoRA files in its `loras` folders) |
 | **Network** | none |
 | **HTTP routes** | `/lora_selector/list`, `/info`, `/preview` (GET) and `/notes` (POST, JSON only) — only the files ComfyUI itself lists as LoRAs (see [Security](#security)) |
@@ -570,6 +572,40 @@ Trigger words come from My notes first, then Civitai, then the A1111 `.json`; ko
 - The model family is a guess when the file has no metadata. A LoRA for another family is only *warned about*, not blocked: ComfyUI applies it as far as its keys match and logs the rest as `NOT LOADED`.
 - A LoRA replaced under the same name makes the node run again (its file's date and size are part of the cache key); the picker's list is kept for 30 seconds, **⟳** rescans.
 - Metadata is read once per file version and cached in memory; a folder of thousands of LoRAs takes a moment the first time the picker opens.
+
+---
+
+## Simple Concatenate
+
+Joins any number of inputs into one text. **A new input appears as soon as the last one is connected**, and the only setting is the separator.
+
+| | |
+| --- | --- |
+| **Class · category** | `BartSimpleConcatenate` · `Bart's nodes/Text` |
+| **Example workflow** | [`17_simple_concatenate.json`](example_workflows/17_simple_concatenate.json) |
+| **Needs** | a ComfyUI with dynamic ("autogrow") inputs; an older one skips this node alone and logs why |
+| **Network** | none |
+| **HTTP routes** | none |
+| **Verified** | in a real ComfyUI frontend and through its API: slots appearing as inputs are connected (one free slot is always there) and tidying up on disconnect, a text, an integer, a float and a boolean joined with the default line break, `", "`, a tab, an empty separator, one input, none, a gap in the slot numbers, and an image refused with a message naming the input; the example runs. |
+
+### Widgets and inputs
+
+| | Meaning |
+| --- | --- |
+| inputs (grow as you connect) | Anything that can be turned into text: text, integers, floats, booleans (written `True` / `False`), a dictionary (as JSON). A list contributes each of its items. Nothing connected to a slot = nothing there. Up to 32 inputs; they are joined in slot order. |
+| `separator` | The only setting. Default **`\n`, a line break**; `\t` is a tab, `\r` a carriage return, `\\` one backslash; anything else (`, `, ` `, ` | `) is used as typed. Can be linked too. |
+
+### Outputs
+
+| Output | Type | Meaning |
+| --- | --- | --- |
+| `text` | `STRING` | The inputs one after the other with the separator between them. |
+
+### Notes and limits
+
+- An **empty text keeps its place** (two separators in a row); an empty *slot* does not count at all.
+- Something that is not text (an image, a model, a latent, ...) stops the run with a message such as `Simple concatenate: text1 is a Tensor, which cannot be turned into text`, rather than writing `<object at 0x...>`.
+- The separator is a single-line box, which cannot show a real line break: that is why the default is typed as `\n`. A real line break pasted into it works too.
 
 ---
 
@@ -771,6 +807,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 | VoxCPM nodes | Hugging Face (weights, once), ModelScope (optional denoiser) | none | the `voxcpm` package and its pinned dependencies; cloning someone's voice is on you |
 | Easy Ollama | `address` | none | your prompt and images go to that server |
 | Lora Selector | none | `/lora_selector/*` | lists the names and metadata of the LoRA files to anyone who can reach the port; `POST /notes` writes one small file in the user folder (JSON only, 64 KB, known LoRA names only) |
+| Simple concatenate | none | none | — |
 
 **Directory node (Load Random Image).** The `/random_image/list`, `/pick` and `/view` routes accept a `dir` parameter with **no restriction whatsoever**: anyone who can reach ComfyUI's HTTP port (not necessarily through the graph or UI at all; a bare GET is enough) can list and read arbitrary files the ComfyUI process can access. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug an allowlist should close.
 
@@ -788,7 +825,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 
 ## Tests
 
-The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), the Lora Selector (LoRA headers and sidecars, notes, the stack, and the node against stand-ins for `comfy`), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
+The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), Simple concatenate (the text conversion and joining), the Lora Selector (LoRA headers and sidecars, notes, the stack, and the node against stand-ins for `comfy`), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -849,6 +886,9 @@ latenttrim/              WAN Latent Trim Start
 yue2/                    YuE2 nodes
   selection.py           pure logic: VAE choices, generate() kwargs, token budgets
   nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
+simple_concat/            Simple concatenate (`BartSimpleConcatenate`, a V3 node with autogrow inputs)
+  selection.py           turning values into text, the separator escapes, joining (no ComfyUI)
+  nodes.py               the node
 lora_selector/           Lora Selector (`LoraSelector`)
   metadata.py            safetensors header, family guess, sidecar files, my notes (no torch)
   selection.py           the stack of rows: parsing, checks, names output
