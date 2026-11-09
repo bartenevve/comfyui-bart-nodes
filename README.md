@@ -215,13 +215,14 @@ Picks a video format and the frame size for a number of megapixels, and cuts the
 | `custom_ratio` | Used only with `format = custom`: `16:10`, `16/10`, `16x10` or a decimal such as `1.85` (between 1:20 and 20:1). |
 | `megapixels` | The area of the frame, as a number (0.05 to 64). **1.03** (default) is H3's own canvas, 768 × 1344 pixels. |
 | `limit_h3` | On by default: the frame stays within H3's 768 × 1344 pixels, so a larger `megapixels` is cut down to it (and `info` says so). Switch it off for other models. |
+| `crop_image` | On by default. **Off: the image goes out unchanged** (the very same image, no cut and no scaling) and the node only works out `width`, `height` and the format (`auto` still looks at the image). `info` says that the image was passed on. |
 
 ### Outputs
 
 | Output | Type | Meaning |
 | --- | --- | --- |
 | `width`, `height` | `INT` | The frame, **both sides multiples of 32** (what H3 needs). Of the pairs of multiples of 32 near the asked area, the one that keeps the format's proportions best is taken (16:9 at 1.03 MP is 1344 × 768, 9:16 is 768 × 1344, 1:1 is 1024 × 1024, or 992 × 992 under the limit). |
-| `image` | `IMAGE` | The input cut around its centre to the frame's proportions (the largest such part: only the surplus on the sides, or top and bottom, is removed, equally on both) and scaled to width × height with an anti-aliased bicubic. Nothing when no image was connected. |
+| `image` | `IMAGE` | With `crop_image` off, the input unchanged. Otherwise the input cut around its centre to the frame's proportions (the largest such part: only the surplus on the sides, or top and bottom, is removed, equally on both) and scaled to width × height with an anti-aliased bicubic. Nothing when no image was connected. |
 | `aspect` | `STRING` | The format that was used, such as `16:9` (a custom ratio as `5:3`). |
 | `ratio` | `FLOAT` | width / height of that format. |
 | `info` | `STRING` | What was decided: the format and why, the size and its megapixels, how much of the image was cropped, and a note when the H3 limit changed the size. |

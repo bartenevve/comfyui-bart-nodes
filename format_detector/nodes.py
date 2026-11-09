@@ -68,6 +68,12 @@ class FormatDetector:
                     "default": "16:10",
                     "tooltip": "Used only when format is custom: 16:10, 16/10 or a decimal such as 1.85 (width / height).",
                 }),
+                # last on purpose: widgets_values are positional, so workflows saved before it keep loading
+                "crop_image": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "On: the image is cut around its centre to the format and scaled to width x height. "
+                               "Off: the image goes out unchanged and the node only works out width, height and the format.",
+                }),
             },
         }
 
@@ -76,7 +82,8 @@ class FormatDetector:
     OUTPUT_TOOLTIPS = (
         "The width of the frame, a multiple of 32.",
         "The height of the frame, a multiple of 32.",
-        "The input image cut around its centre to the format and scaled to width x height (nothing when no image was given).",
+        "The input image cut around its centre to the format and scaled to width x height (unchanged when crop_image is "
+        "off; nothing when no image was given).",
         "The format that was used, such as 16:9 (for a custom ratio the ratio as typed).",
         "width / height of that format.",
         "What was decided: the format, the size, how much of the image was cropped, and a note when H3's limit changed the size.",
@@ -96,7 +103,7 @@ class FormatDetector:
             return str(exc)
         return True
 
-    def detect(self, format, megapixels, limit_h3=True, image=None, custom_ratio="16:10"):
+    def detect(self, format, megapixels, limit_h3=True, image=None, custom_ratio="16:10", crop_image=True):
         try:
             how, source = "", None
             if image is not None:
@@ -117,9 +124,14 @@ class FormatDetector:
                 ratio_w, ratio_h = FORMATS[chosen]
             width, height, note = size_for(ratio_w, ratio_h, megapixels, limit_h3)
             fitted, box = None, None
-            if image is not None:
+            if image is not None and crop_image:
                 fitted, box, source = fit_image(image, width, height)
-            info = describe(chosen, how, source if image is not None else None, (width, height), box, note)
+            elif image is not None:
+                fitted = image  # crop_image is off: the very same tensor goes out
+                note = (note + "\n" if note else "") + (
+                    f"crop_image is off: the image is passed on unchanged ({source[0]}x{source[1]})" if source else "crop_image is off"
+                )
+            info = describe(chosen, how, source if image is not None and crop_image else None, (width, height), box, note)
         except FormatError as exc:
             raise RuntimeError(f"Format Detector: {exc}") from None
         return (width, height, fitted, chosen, float(ratio_w / ratio_h), info)

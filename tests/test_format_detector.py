@@ -254,6 +254,35 @@ class TestNode(unittest.TestCase):
         _, _, image, _, _, _ = self.node.detect("16:9", 1.03, True, source)
         self.assertTrue(self.torch.equal(image, source))
 
+    def test_crop_image_off_passes_the_image_on_unchanged_and_still_gives_the_format(self):
+        source = self.gradient(1080, 1920)
+        width, height, image, aspect, ratio, info = self.node.detect("auto", 1.03, True, source, "16:10", False)
+        self.assertIs(image, source)  # the very same tensor, not a copy and not rescaled
+        self.assertEqual((width, height, aspect), (1344, 768, "16:9"))
+        self.assertAlmostEqual(ratio, 16 / 9)
+        self.assertIn("crop_image is off", info)
+        self.assertIn("1920x1080", info)
+        self.assertNotIn("% cropped", info)
+
+    def test_crop_image_off_still_picks_auto_from_the_image_and_applies_the_limit(self):
+        width, height, image, aspect, _, info = self.node.detect("auto", 4.0, True, self.gradient(1920, 1080), "16:10", False)
+        self.assertEqual((width, height, aspect), (768, 1344, "9:16"))
+        self.assertEqual(tuple(image.shape), (1, 1920, 1080, 3))
+        self.assertIn("limited to MiniMax H3's canvas", info)
+
+    def test_crop_image_off_without_an_image_changes_nothing(self):
+        width, height, image, aspect, _, info = self.node.detect("16:9", 1.03, True, None, "16:10", False)
+        self.assertEqual((width, height, aspect), (1344, 768, "16:9"))
+        self.assertIsNone(image)
+        self.assertNotIn("crop_image is off", info)
+
+    def test_crop_image_is_on_by_default_and_last_so_old_workflows_keep_loading(self):
+        spec = self.nodes.FormatDetector.INPUT_TYPES()
+        self.assertTrue(spec["optional"]["crop_image"][1]["default"])
+        self.assertEqual(list(spec["optional"]), ["image", "custom_ratio", "crop_image"])
+        _, _, image, _, _, _ = self.node.detect("16:9", 0.25, False, self.gradient(40, 40))  # the default: cropped
+        self.assertEqual(tuple(image.shape[1:3]), (384, 672))
+
     def test_a_single_frame_without_a_batch_axis(self):
         _, _, image, _, _, _ = self.node.detect("16:9", 0.25, False, self.torch.rand(40, 60, 3))
         self.assertEqual(image.ndim, 4)
