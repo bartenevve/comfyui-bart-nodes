@@ -17,6 +17,7 @@ Custom nodes for ComfyUI: smarter ways to **pick** an image (any folder, a touch
 | [**Bart's Easy Ollama 🦙**](#easy-ollama) | `Text` | the plainest **Ollama call**: address, model, prompt, optional images, a JSON of options in; the answer and a debug text out | an Ollama server (a vision model for images) |
 | [**Bart's Simple concatenate 🔗**](#simple-concatenate) | `Text` | joins **any number of inputs** (text, numbers, ...) into one text; a new input appears as the last one is connected; the separator is the only setting | a ComfyUI with dynamic inputs |
 | [**Bart's Lora Selector 🎛️**](#lora-selector) | `Model` | **several LoRAs on one node**, each with a switch and a strength, chosen on a screen that shows trigger words, model family and recommended settings, with filter and search | nothing beyond ComfyUI |
+| [**Bart's Model Selector 🧩**](#model-selector) | `Model` | loads **any model file** (checkpoint, diffusion model, text encoder, VAE, CLIP vision; safetensors, ckpt, GGUF) from **whichever model folder** it lies in, chosen on a screen with **filters and the file's characteristics**; gives model, clip, vae, clip_vision as the file holds them, and the name | nothing beyond ComfyUI (GGUF needs a GGUF loader pack) |
 | [**Bart's WAN Latent Trim Start 🎞️**](#wan-latent-trim-start) | `Latent` | cuts frames off the **start** of a WAN video latent **before the VAE decode**; the count is in pixel frames | nothing beyond ComfyUI |
 | [**Bart's YuE2 Model Loader / Plan Score / Generate Song 🎵**](#yue2-music-generation) | `Audio` | generates a full song from style + lyrics with [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B), with an editable ABC score in between | the `yue2` wheel and a big GPU (24GB NVIDIA, or Apple silicon slowly) |
 | [**Bart's VoxCPM Model Loader / Speak (TTS / voice clone) 🗣️**](#voxcpm-speech) | `Audio` | speaks a text with [OpenBMB VoxCPM](https://github.com/OpenBMB/VoxCPM): plain, in a **voice described in words**, or **cloned from a recording** | the `voxcpm` package and a GPU (or a lot of patience) |
@@ -201,6 +202,7 @@ Picks a video format and the frame size for a number of megapixels, and cuts the
 | --- | --- |
 | **Class · category** | `FormatDetector` · `Bart's nodes/Image` |
 | **Example workflow** | [`18_format_detector.json`](example_workflows/18_format_detector.json) |
+| [`19_model_selector.json`](example_workflows/19_model_selector.json) | Model Selector: choose any model file on the picker screen, the file's name to a preview (choose a model before running) |
 | **Needs** | nothing beyond ComfyUI |
 | **Network** | none |
 | **HTTP routes** | none |
@@ -653,6 +655,62 @@ Joins any number of inputs into one text. **A new input appears as soon as the l
 
 ---
 
+## Model Selector
+
+One node for every model file, in the spirit of [ComfyUI-SmartModelLoaders-MXD](https://github.com/Maxed-Out-99/ComfyUI-SmartModelLoaders-MXD): **the format does not matter and neither does the folder the file lies in.** It reads the file, works out what it is, loads it the right way and gives out **whatever the file holds**: a checkpoint gives model + CLIP + VAE, a diffusion model only the model, and so on.
+
+| | |
+| --- | --- |
+| **Class · category** | `ModelSelector` · `Bart's nodes/Model` |
+| **Example workflow** | [`19_model_selector.json`](example_workflows/19_model_selector.json) |
+| **Needs** | nothing beyond ComfyUI. **GGUF files** need a GGUF loader pack installed: [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) or ComfyUI-SmartModelLoaders-MXD (this node borrows its loader; nothing of theirs is copied) |
+| **Network** | none |
+| **HTTP routes** | `/model_selector/list`, `/model_selector/info` (GET) — only files under the model folders |
+| **Verified** | in a real ComfyUI with sample files of every kind (headers of the right shape): the routes, the picker screen (cards, the three filter rows, the search, the characteristics panel, GGUF refused until a loader pack exists), choosing, the dimmed outputs, save and reload, a missing file marked in red, queue-time errors (empty, missing, outside the folders, GGUF without a pack), and the message for a damaged file. A **real** (tiny, pixel-space) VAE file went through the node into a real `VAEDecode`, with the kind taken from its folder. Which ComfyUI loader gets which file, and what comes out where, is unit-tested against stand-ins, GGUF included. **Not:** a real checkpoint, diffusion model, text encoder or CLIP vision file (none was installed), a real GGUF through a real loader pack, and the family guess on real downloaded models (only on headers made to look like them). |
+
+### Widgets and inputs
+
+| | Meaning |
+| --- | --- |
+| **＋ Choose a model…** | Opens the picker screen. The node shows the chosen file's name, its type, model family, precision and what it gives (`checkpoint · SDXL · safetensors fp16 2.6B → MODEL, CLIP, VAE`), and the outputs the file does **not** fill are drawn as `name (none)`. A file that has gone is marked ⚠ in red; the graph will not run until another is chosen. |
+| `weight_dtype` (advanced) | For checkpoints and diffusion models: `default` or load the weights as `fp8_e4m3fn` / `fp8_e4m3fn_fast` / `fp8_e5m2` (as Load Diffusion Model). |
+| `clip_type` (advanced) | For a **text encoder** file: what it is meant for (`stable_diffusion`, `flux`, `wan`, ..., the types of Load CLIP, see its recipes). One file does not say, so you do. For a GGUF text encoder it is passed to the loader pack. |
+| `device` (advanced) | For a text encoder file: `cpu` keeps it off the GPU. |
+
+The picker screen:
+
+- a card for **every model file** of the model folders (checkpoints, diffusion models / unet, text encoders / clip, vae, clip_vision, and the GGUF folders), sub-folders included, in **any format**: `.safetensors`, `.sft`, `.ckpt`, `.pt`, `.pth`, `.bin`, `.gguf`;
+- three rows of **filters**: the **type** (checkpoint, diffusion model, text encoder, VAE, CLIP vision), the **model** family (SDXL, SD 1.x, SD 3, Flux, Wan, Qwen Image, Z-Image, LTX, Hunyuan, T5, ...) and the **format**, each with counts; they combine. A **search** that needs every word you type to be found in the name, type, family, format or precision (`flux bf16`, `q4_k`), and sorting by name, newest or size;
+- a **characteristics panel** for the selected card: the type (and whether it comes from the file or only from its folder), the model family, format, **precision** (fp32 / fp16 / bf16 / fp8, or the GGUF quantisation such as Q4_K_M), the **number of parameters**, the number of tensors, the size, the folder, the date, **what it gives on its outputs**, and the metadata the file carries (title, author, description, architecture, and for trained models the base model, resolution and epochs). **Use this model** chooses it.
+
+### Outputs
+
+| Output | Type | Meaning |
+| --- | --- | --- |
+| `model` | `MODEL` | The diffusion model: from a checkpoint or a diffusion model file, empty otherwise. |
+| `clip` | `CLIP` | The text encoder: from a checkpoint or a text encoder file. |
+| `vae` | `VAE` | The VAE: from a checkpoint or a VAE file. |
+| `clip_vision` | `CLIP_VISION` | The CLIP vision model: from a CLIP vision file. |
+| `name` | `STRING` | The file's name without its extension (`flux1-dev-Q4_K_M`). |
+
+Outputs the file does not hold are empty: connect only the ones your file gives.
+
+### How it works
+
+**What a file is** is decided by its **content**, so a diffusion model lying in the `checkpoints` folder, or a VAE in `unet`, is still loaded as what it is. For `.safetensors` only the **header** is read (tensor names, shapes and types, the `__metadata__` block): a file with a diffusion-model part and a text-encoder or VAE part is a checkpoint, with only the diffusion-model part a diffusion model, and so on; the family comes from the metadata, else from the tensor names. For `.gguf` the architecture and quantisation come from the header. A file whose content says nothing (a pickle `.ckpt` / `.pt`, which is **never opened** by the scan, or an unusual layout) takes the kind of the folder it lies in, and the panel says so.
+
+Loading is ComfyUI's own: `load_checkpoint_guess_config` for checkpoints (model, CLIP, VAE), `load_diffusion_model`, `load_clip`, the VAE and CLIP vision loaders; a pickle file is loaded the way ComfyUI loads it (`safe_load`). GGUF files go through the class of the installed loader pack (`UnetLoaderGGUF` / `CLIPLoaderGGUF`, or the Smart loaders of MXD), which is told where the file is: the pack does not need the file to lie in its own folder.
+
+### Notes and limits
+
+- The scan covers the **model-loading folders** (and the extra folders ComfyUI is configured with), not the whole `models` directory: LoRAs, ControlNets, upscalers and embeddings have their own loaders (use [Lora Selector](#lora-selector) for LoRAs). Files whose names start with a dot are skipped; at most 20,000 files are listed.
+- The id of a choice is `folder::path/inside/it` (`checkpoints::sdxl/base.safetensors`), so the same file name in two folders is two different choices, and a workflow keeps working when the file is moved *within* its folder only if you pick it again.
+- One text-encoder file at a time: models that need two or more encoders (SDXL's, Flux's) take them from a checkpoint, or you load the encoders separately (a dual-CLIP loader is not included).
+- A file that is not a recognised kind (it says nothing and lies in no known folder) is refused with a message instead of being guessed.
+- The family and kind are **guesses from headers**: check the characteristics panel before trusting them on an unusual model.
+
+---
+
 ## WAN Latent Trim Start
 
 Cuts frames off the **start** of a WAN video latent **before the VAE decode**, with the count in **pixel frames** (the unit you see in the finished video).
@@ -853,6 +911,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 | Lora Selector | none | `/lora_selector/*` | lists the names and metadata of the LoRA files to anyone who can reach the port; `POST /notes` writes one small file in the user folder (JSON only, 64 KB, known LoRA names only) |
 | Simple concatenate | none | none | — |
 | Format Detector | none | none | — |
+| Model Selector | none | `/model_selector/list`, `/info` | lists the names and header facts (type, family, precision, parameters, metadata) of the model files to anyone who can reach the port; only headers are read, no file is loaded or unpickled by the scan |
 
 **Directory node (Load Random Image).** The `/random_image/list`, `/pick` and `/view` routes accept a `dir` parameter with **no restriction whatsoever**: anyone who can reach ComfyUI's HTTP port (not necessarily through the graph or UI at all; a bare GET is enough) can list and read arbitrary files the ComfyUI process can access. This is a deliberate tradeoff for the node's core feature (loading from any folder), not a bug an allowlist should close.
 
@@ -870,7 +929,7 @@ The examples were loaded back into a real ComfyUI frontend (01-05 and 09-13) and
 
 ## Tests
 
-The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), Format Detector (formats, sizes for every format at many megapixel values, the crop box, the node against real tensors), Simple concatenate (the text conversion and joining), the Lora Selector (LoRA headers and sidecars, notes, the stack, and the node against stand-ins for `comfy`), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
+The logic is covered by unit tests (450+; they need no ComfyUI and no network, and the ones that need torch skip themselves without it): file selection and the sequential / increment rules (including the edit-serial handshake with the frontend), the shared image decoding (truncated, 16-bit, palette, EXIF and animated files, compared with the loaders it replaced), booru position selection, the download layer (against a local HTTP server: size and signature checks, redirects that leave the site, the cache limit, transient versus permanent failures) and the backends' parsers (Gelbooru HTML, Moebooru / dapi JSON), `IS_CHANGED` of every node called the way ComfyUI calls it, the 52prompts JavaScript interpreter (against inline fixtures, including its memory limits), the YuE2 helpers, the MiniMax H3 wrapper (against a faked Ollama) with its URL and option validation, the Image Picker's path safety / folder listing / thumbnail generation (also with many threads at once), the latent trim's frame math (and, with torch installed, the node against real tensors), the crop box clamping and, under `node` when installed, the crop editor's drag geometry, and the anatomy filter's verdict parsing and Ollama client (against a mocked server), the VoxCPM nodes (against a stand-in `voxcpm` package), the Model Selector (headers of every kind of model file, the folder scan, the loading per kind against stand-ins, GGUF), Format Detector (formats, sizes for every format at many megapixel values, the crop box, the node against real tensors), Simple concatenate (the text conversion and joining), the Lora Selector (LoRA headers and sidecars, notes, the stack, and the node against stand-ins for `comfy`), and Easy Ollama (against a local stand-in server that records what arrives, including requests with a `num_ctx` from 256 to 1,000,000).
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -931,6 +990,10 @@ latenttrim/              WAN Latent Trim Start
 yue2/                    YuE2 nodes
   selection.py           pure logic: VAE choices, generate() kwargs, token budgets
   nodes.py               YuE2ModelLoader, YuE2Plan, YuE2Generate; pipeline cache, ABC/audio I/O
+model_selector/           Model Selector (`ModelSelector`)
+  model_info.py          safetensors / GGUF headers, the kind, family, precision and parameters of a file (no torch)
+  files.py               finding the model files of every folder, ids, resolving them safely
+  nodes.py, routes.py    the node (ComfyUI's loaders per kind, the GGUF borrow); /model_selector/list, /info
 format_detector/          Format Detector (`FormatDetector`)
   selection.py           formats, the nearest-format search, the size for a number of megapixels, the crop box (no torch)
   nodes.py               the node; crops and scales the IMAGE with torch
@@ -967,6 +1030,7 @@ CONTRIBUTING.md          how to add a node sub-package, and the documentation te
 - The booru node can only address a limited number of positions per source (see its section), and those positions shift as new posts are uploaded.
 - The 52prompts node depends on the shape of the site's generator scripts; a rewrite outside the supported JavaScript subset needs `prompts52/jsmini.py` extended (it fails loudly).
 - The Lora Selector has been run with ComfyUI's real LoRA code on a tiny stand-in network, not on a real checkpoint (none was installed here); the application itself is ComfyUI's `load_lora_for_models`, driven in the same way as the stock Load LoRA.
+- The Model Selector has loaded one real file (a tiny pixel-space VAE); checkpoints, diffusion models, text encoders, CLIP vision and GGUF through a real loader pack are covered by stand-ins and header-shaped sample files, not real downloads.
 - Easy Ollama has been run against one small vision model; with the context left unset the server's own choice (here 262144, 33 GB) is not something the node can prevent, only report: keep `num_ctx` in the settings.
 - The VoxCPM nodes have been run only against a stand-in `voxcpm` package: no audio from the real package and weights has been produced by this pack, and the package's pinned dependencies (gradio 6, datasets 3, Python < 3.13) may not fit your ComfyUI environment.
 - The YuE2 nodes have run end to end on Apple MPS (slow: ~13 min for a 98 s track) but not on CUDA, and not inside a ComfyUI graph with the real `yue2` package installed.

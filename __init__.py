@@ -49,6 +49,15 @@ except Exception:
     logger.exception("comfyui-bart-nodes: YuE2 nodes failed to load, skipping them")
 
 try:
+    from .model_selector.nodes import ModelSelector
+    from .model_selector import routes as model_selector_routes  # noqa: F401  registers /model_selector
+
+    NODE_CLASS_MAPPINGS["ModelSelector"] = ModelSelector
+    NODE_DISPLAY_NAME_MAPPINGS["ModelSelector"] = "Bart's Model Selector \U0001f9e9"
+except Exception:
+    logger.exception("comfyui-bart-nodes: ModelSelector failed to load, skipping it")
+
+try:
     from .format_detector.nodes import FormatDetector
 
     NODE_CLASS_MAPPINGS["FormatDetector"] = FormatDetector
