@@ -84,12 +84,12 @@ except Exception:
     logger.exception("comfyui-bart-nodes: LoraSelector failed to load, skipping it")
 
 try:
-    from .ollama_chat.nodes import OllamaChat
+    from .ollama_chat.nodes import BartEasyOllama
 
-    NODE_CLASS_MAPPINGS["OllamaChat"] = OllamaChat
-    NODE_DISPLAY_NAME_MAPPINGS["OllamaChat"] = "Bart's Easy Ollama \U0001f999"
+    NODE_CLASS_MAPPINGS["BartEasyOllama"] = BartEasyOllama
+    NODE_DISPLAY_NAME_MAPPINGS["BartEasyOllama"] = "Bart's Easy Ollama \U0001f999"
 except Exception:
-    logger.exception("comfyui-bart-nodes: OllamaChat failed to load, skipping it")
+    logger.exception("comfyui-bart-nodes: BartEasyOllama failed to load, skipping it")
 
 try:
     from .voxcpm_tts.nodes import VoxCPMGenerate, VoxCPMModelLoader

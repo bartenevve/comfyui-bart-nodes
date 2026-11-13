@@ -37,7 +37,7 @@ def encode_images(images, max_side=client.DEFAULT_IMAGE_MAX_SIDE, quality=92):
     return encoded, labels
 
 
-class OllamaChat:
+class BartEasyOllama:
     """The plainest possible Ollama call: address, model, prompt, optional images, a JSON of options."""
 
     @classmethod

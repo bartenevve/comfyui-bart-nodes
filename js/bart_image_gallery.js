@@ -97,6 +97,17 @@ const SORTS = {
     oldest: (a, b) => a.mtime - b.mtime || naturalCompare(a.name, b.name),
 };
 
+// The order the gallery's Sort menu last left: the pickers' step buttons walk the same order the user was looking at
+export function currentSortKey() {
+    const sort = loadPrefs().sort;
+    return SORTS[sort] ? sort : "name-asc";
+}
+
+// `files` are listing entries ({ name, mtime }); returns a sorted copy
+export function sortFiles(files) {
+    return [...files].sort(SORTS[currentSortKey()]);
+}
+
 const STYLE = `
 .bgal-overlay{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.86);display:flex;justify-content:center;
   font-family:system-ui,-apple-system,sans-serif;color:#eee;-webkit-text-size-adjust:100%}

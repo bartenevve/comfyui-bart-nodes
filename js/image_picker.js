@@ -5,8 +5,8 @@ import {
     fetchListing,
     fetchPool,
     joinPath,
-    naturalCompare,
     openImageGallery,
+    sortFiles,
     splitPath,
     thumbUrl,
     uploadToInput,
@@ -266,8 +266,26 @@ app.registerExtension({
                 node.setSize([node.size[0], Math.max(node.size[1], node.computeSize()[1])]);
             }
 
-            function setMode(value) {
+            async function setMode(value) {
                 if (value === mode()) return;
+                // Leaving the random mode keeps the image it was showing: the widget holds an old pick
+                // (the random one is chosen by the seed, never stored), so ask for the one the seed selects now.
+                let carried = "";
+                if (mode() === "random" && value !== "random") {
+                    carried = pool.pick || "";
+                    try {
+                        const data = await fetchPool(folderWidget.value || "", !!subWidget.value, seedWidget.value);
+                        carried = data.pick || carried;
+                    } catch (e) {
+                        /* the pick already shown is the best guess */
+                    }
+                    if (value === mode()) return; // changed again while asking
+                }
+                if (carried) {
+                    imageWidget.value = carried;
+                    if (imageWidget.callback) imageWidget.callback(carried);
+                    sizeText = "";
+                }
                 modeWidget.value = value;
                 if (modeWidget.callback) modeWidget.callback(value);
                 // a pool starts where the user already is
@@ -369,7 +387,8 @@ app.registerExtension({
                     } else {
                         const { subfolder } = splitPath(imageWidget.value || "");
                         const data = await fetchListing(subfolder);
-                        paths = data.files.map((file) => file.name).sort(naturalCompare).map((name) => joinPath(subfolder, name));
+                        // in the order the gallery's Sort menu shows (name, newest, ...), not always by name
+                        paths = sortFiles(data.files).map((file) => joinPath(subfolder, file.name));
                     }
                     if (!paths.length) return;
                     const index = paths.indexOf(imageWidget.value || "");

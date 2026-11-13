@@ -113,14 +113,14 @@ A Load Image replacement for **phones and tablets**. On a touch screen the stock
 | Widget | Meaning |
 | --- | --- |
 | **Fixed / 🎲 Random / ➡ Sequential** | Big segmented buttons (the node's `mode`). **Fixed**: the image shown. **Random**: a file of the pool chosen by the `seed`. **Sequential**: the file shown, then the next one of the pool on every run, wrapping after the last. |
-| pool row (Random / Sequential) | `📁 trip/2024 · 312 images`: the folder the pool is made of (tap it to change it) and a **subfolders** checkbox (`include_subfolders`, off by default: only that folder; on: the whole tree below it). A pool starts at the folder of the image you had. |
+| pool row (Random / Sequential) | `📁 trip/2024 · 312 images`: the folder the pool is made of (tap it to change it) and a **subfolders** checkbox (`include_subfolders`, off by default: only that folder; on: the whole tree below it). A pool starts at the folder of the image you had. Switching from Random to Fixed or Sequential **keeps the image Random was showing** as the current one. |
 | `seed` + `control after generate` | Shown in Random mode only. The preview shows **the file this seed selects, i.e. what the next run will load**; the usual `randomize` control gives a new one after every queued run, 🎲 sets a new seed right now, `fixed` repeats the same image. The same seed always gives the same file (for the same folder contents). |
 | **🖼 Choose image** (or tap the preview) | Opens the gallery. The button is an ordinary page button, not a canvas widget, and the gallery ignores taps in its first 350 ms, so the opening gesture can't select or dismiss anything. |
 | the gallery | Thumbnails **with file names**, folders first. Native touch scrolling (momentum included; a scroll never counts as a tap). **Tap an image** to select it and close. Large 44 px controls, 16 px inputs (no iOS zoom on focus). |
 | breadcrumbs | `🏠 input › folder › subfolder`: tap a segment to jump up; tap a 📁 to go into a subfolder (the stock node can't leave the top level). |
 | search / sort | Filter by name; sort by name A→Z / Z→A (numbers sort naturally: `img2` before `img10`), newest or oldest first. |
 | size | **S / M / L** buttons and a slider (90-400 px cells). Size and sort are remembered in the browser. |
-| ◀ / ▶ | The previous / next file in the same folder (Fixed) or in the whole pool (Sequential), wrapping at the ends. Hidden in Random mode. |
+| ◀ / ▶ | The previous / next file in the same folder (Fixed) or in the whole pool (Sequential), wrapping at the ends. In Fixed mode they follow the **order the gallery's sort menu last had** (name, newest, oldest, ...); Sequential keeps the order the runs walk the pool (by name). Hidden in Random mode. |
 | **📁 Use this folder** | In the gallery of Random / Sequential mode: makes the folder you are looking at the pool. Tapping an image there selects it (the start of the sequence), and moves the pool to its folder if it is outside the current one. |
 | **＋ Upload** | In the gallery (into the folder being viewed) and on the node: pick files, or drop an image on the node. Only image files are taken (PNG, JPEG, WebP, BMP, GIF); anything else is reported and skipped. One uploaded file is selected right away. |
 
@@ -501,7 +501,7 @@ The plainest way to ask a local **Ollama** something, with or without images. Ev
 
 | | |
 | --- | --- |
-| **Class · category** | `OllamaChat` · `Bart's nodes/Text` |
+| **Class · category** | `BartEasyOllama` · `Bart's nodes/Text` (the class key is `Bart`-prefixed on purpose: ComfyUI keeps one node per key across all packs and silently lets the pack loaded last win, and the plain `OllamaChat` of the comfyui-ollama pack took the node's place; before 0.21.2 the key was `OllamaChat`, so a graph saved with it needs the node added again) |
 | **Example workflow** | [`15_easy_ollama.json`](example_workflows/15_easy_ollama.json) |
 | **Needs** | an Ollama server; for images a vision model (tested: `qwen3-vl:2b-instruct`, 1.9 GB) |
 | **Network** | outbound to `address` only (`POST /api/chat`, then a `GET /api/ps` for the debug text) |
@@ -1004,7 +1004,7 @@ lora_selector/           Lora Selector (`LoraSelector`)
   metadata.py            safetensors header, family guess, sidecar files, my notes (no torch)
   selection.py           the stack of rows: parsing, checks, names output
   nodes.py, routes.py    the node; /lora_selector/list, /info, /preview, /notes
-ollama_chat/             Easy Ollama (`OllamaChat`)
+ollama_chat/             Easy Ollama (`BartEasyOllama`)
   client.py              address and settings parsing, the request, the HTTP call, the debug text (no torch)
   nodes.py               the node; IMAGE batch -> base64 JPEGs
 voxcpm_tts/              VoxCPM speech nodes (not `voxcpm/`: it must not shadow the package it wraps)

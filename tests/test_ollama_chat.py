@@ -382,7 +382,7 @@ class TestNode(WithServer):
             self.nodes.encode_images(self.torch.rand(0, 8, 8, 3))
 
     def test_the_node_sends_the_images_and_reports_them(self):
-        node = self.nodes.OllamaChat()
+        node = self.nodes.BartEasyOllama()
         text, debug = node.chat(self.server.url, "m", "describe", self.frames((32, 32), (32, 32)),
                                 '{"num_ctx": 8192, "image_max_side": 16}')
         self.assertEqual(text, "A story about two heroes.")
@@ -393,18 +393,18 @@ class TestNode(WithServer):
         self.assertNotIn("image_max_side", body["options"])
 
     def test_without_images_the_node_still_works(self):
-        text, debug = self.nodes.OllamaChat().chat(self.server.url, "m", "hi")
+        text, debug = self.nodes.BartEasyOllama().chat(self.server.url, "m", "hi")
         self.assertEqual(text, "A story about two heroes.")
         self.assertNotIn("images sent", debug)
 
     def test_bad_image_settings_are_a_debug_error_not_a_crash(self):
-        text, debug = self.nodes.OllamaChat().chat(self.server.url, "m", "hi", self.frames((8, 8)), '{"image_max_side": 1}')
+        text, debug = self.nodes.BartEasyOllama().chat(self.server.url, "m", "hi", self.frames((8, 8)), '{"image_max_side": 1}')
         self.assertEqual(text, "")
         self.assertIn("ERROR", debug)
         self.assertEqual(self.server.requests, [])
 
     def test_validation(self):
-        validate = self.nodes.OllamaChat.VALIDATE_INPUTS
+        validate = self.nodes.BartEasyOllama.VALIDATE_INPUTS
         self.assertTrue(validate())
         self.assertTrue(validate(address="localhost", model="m", prompt="p", settings=client.DEFAULT_SETTINGS))
         self.assertIn("model is empty", validate(model="  "))
@@ -414,7 +414,7 @@ class TestNode(WithServer):
         self.assertIn("timeout", validate(settings='{"timeout": 0}'))
 
     def test_a_random_seed_runs_every_time_and_a_fixed_one_may_be_cached(self):
-        changed = self.nodes.OllamaChat.IS_CHANGED
+        changed = self.nodes.BartEasyOllama.IS_CHANGED
         for settings in (client.DEFAULT_SETTINGS, '{"temperature": 0.8}', "", '{"seed": -1}', "{broken", '{"seed": "x"}'):
             value = changed(settings)
             self.assertNotEqual(value, value, settings)  # nan
@@ -425,12 +425,12 @@ class TestNode(WithServer):
         self.assertNotEqual(changed(), changed())  # called without inputs (all linked): treated as random
 
     def test_schema(self):
-        spec = self.nodes.OllamaChat.INPUT_TYPES()
+        spec = self.nodes.BartEasyOllama.INPUT_TYPES()
         self.assertEqual(list(spec["required"]), ["address", "model", "prompt"])
         self.assertEqual(spec["required"]["address"][1]["default"], "localhost")
         self.assertEqual(spec["optional"]["images"], ("IMAGE",))
         self.assertEqual(json.loads(spec["optional"]["settings"][1]["default"])["top_k"], 40)
-        self.assertEqual(self.nodes.OllamaChat.RETURN_NAMES, ("text", "debug"))
+        self.assertEqual(self.nodes.BartEasyOllama.RETURN_NAMES, ("text", "debug"))
 
 
 if __name__ == "__main__":
