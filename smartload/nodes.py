@@ -11,13 +11,13 @@ from .selection import ASPECT_LOCKS, MAX_PIXELS, SNAPS, clamp_box
 class SmartLoadImage:
     @classmethod
     def INPUT_TYPES(cls):
-        input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
-        files = folder_paths.filter_files_content_types(files, ["image"])
         crop = ("INT", {"default": 0, "min": 0, "max": MAX_PIXELS})
         return {
             "required": {
-                "image": (sorted(files),),
+                # A plain string rather than a combo of the input folder's files: the gallery on the node
+                # picks from the input folder AND its subfolders ("trip/a.png"), and ComfyUI rejects a value
+                # that is not in a combo's list. Saved workflows hold the same file name string either way.
+                "image": ("STRING", {"default": ""}),
                 # pixels of the ORIGINAL image; width or height 0 = keep everything
                 "crop_x": crop,
                 "crop_y": crop,
@@ -67,6 +67,9 @@ class SmartLoadImage:
         # None = wired from another node, unknowable here
         if image is None:
             return True
-        if not folder_paths.exists_annotated_filepath(image):
+        if not image.strip():
+            return "no image selected - open the picker and choose one"
+        # exists_annotated_filepath refuses a path that leaves the input folder
+        if not folder_paths.exists_annotated_filepath(image) or not os.path.isfile(folder_paths.get_annotated_filepath(image)):
             return f"Invalid image file: {image}"
         return True

@@ -159,13 +159,14 @@ Like the stock Load Image, plus a **crop editor on the node**: pick a file, fram
 | **Needs** | nothing beyond ComfyUI |
 | **Network** | none |
 | **HTTP routes** | none (the preview uses ComfyUI's own `/view`) |
-| **Verified** | in a real ComfyUI: drawing, moving and resizing with the mouse (also with an aspect lock), numeric edits, save and reload, server-side crops checked pixel by pixel, a photo stored sideways with an EXIF orientation tag; edge cases with a real mouse: a plain click (leaves the crop alone), a handle dragged far outside the image (stops at the image edge) and past the opposite corner (collapses to the 8-pixel minimum, never NaN), a 16:9 lock on a 64 grid. **Not** with a finger or a pen: the touch handling (one pointer at a time, 32 px handle targets) is covered by reading the code and the geometry tests only. |
+| **Verified** | in a real ComfyUI: drawing, moving and resizing with the mouse (also with an aspect lock), numeric edits, save and reload, server-side crops checked pixel by pixel, a photo stored sideways with an EXIF orientation tag; the picker row (the gallery opened on a subfolder, choosing there, ◀ / ▶ following the gallery's date sort and wrapping, the crop reset by a new file, the name shown after a reload), an older workflow saved with the file list loading and running unchanged, and a run on a file in a subfolder; edge cases with a real mouse: a plain click (leaves the crop alone), a handle dragged far outside the image (stops at the image edge) and past the opposite corner (collapses to the 8-pixel minimum, never NaN), a 16:9 lock on a 64 grid. **Not** with a finger or a pen: the touch handling (one pointer at a time, 32 px handle targets) is covered by reading the code and the geometry tests only. |
 
 ### Widgets
 
 | Widget | Meaning |
 | --- | --- |
-| `image` + **📁 Upload image** | Files from ComfyUI's `input` folder. Upload a new one with the button or **drop an image on the node**: it is saved to `input` and selected. |
+| **🖼 Choose image**, **◀ / ▶**, **＋** | The same picker screen as [Image Picker](#image-picker): a gallery of ComfyUI's `input` folder **and its subfolders** with search, sorting by name or date and thumbnail sizes. **◀ / ▶** step to the previous / next file of the same folder **in the order the gallery's sort menu last had**, wrapping at the ends. **＋** uploads a file (or **drop an image on the node**): it is saved to `input` and selected. Under the buttons the chosen path is shown. |
+| `image` (hidden) | The chosen file as a path inside `input` (`trip/a.png`). It is a plain string now, not a list of the folder's files, so a subfolder file is valid, and the value can also be **linked** from a string node. Workflows saved with the old file list load unchanged. |
 | the preview | **Drag on empty space** to draw a crop box, **drag inside** it to move it, **drag a handle** (corners and sides) to resize. A plain click changes nothing (only a drag of a few pixels does), a second finger is ignored while one is dragging, and every handle has a 32 px touch target around its small knob. The outside is dimmed, thirds guides are drawn, and the info line shows `900×600 → 471×337 at (163, 142) · 1.398`. |
 | `crop_x`, `crop_y`, `crop_width`, `crop_height` | The crop in **pixels of the original image**. The editor writes them while you drag; you can also type them, or **link** them from other nodes. `crop_width` or `crop_height` of **0 = no crop** (the default). A box sticking out of the image is cut at its edge instead of failing, so a saved crop still works if the file is later replaced by a smaller one. |
 | `aspect_lock` | `free`, `original`, `1:1`, `4:3`, `3:4`, `3:2`, `2:3`, `16:9`, `9:16`, `21:9`, `9:21`. While not `free`, drawing and resizing keep the ratio, and picking one reshapes the current box (shrinking it around its centre, never growing). |
@@ -187,9 +188,10 @@ The crop is stored as the four pixel widgets and applied on the server **after**
 
 ### Notes and limits
 
-- Choosing a different file resets the crop to "no crop".
+- Choosing a different file resets the crop to "no crop" (choosing the same file again keeps it).
 - Upload takes image files only (PNG, JPEG, WebP, BMP, GIF); anything else is refused with a message under the preview.
 - The editor shows the crop widgets' own values. If you link a crop number from another node, the link wins when the graph runs, but the preview box keeps showing the widget's value.
+- An empty value, a missing file, a folder, or a path that leaves the `input` folder stops the run with a message naming it.
 - Files outside ComfyUI's `input` folder: use [Load Random Image](#load-random-image) (an arbitrary directory, no crop).
 
 ---

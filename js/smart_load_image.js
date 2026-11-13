@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { fetchListing, joinPath, openImageGallery, sortFiles, splitPath } from "./bart_image_gallery.js";
 
 const NODE_NAME = "SmartLoadImage";
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|bmp|gif)$/i;
@@ -14,6 +15,24 @@ const CURSORS = {
 const ACCEPT = ".png,.jpg,.jpeg,.webp,.bmp,.gif";
 function isImageFile(file) {
     return IMAGE_EXTENSIONS.test(file.name);
+}
+
+// hide a widget without removing it: an unknown type is not drawn, its value still serializes
+function hideWidget(widget) {
+    widget.type = "smart_load_image_hidden";
+    widget.computeSize = () => [0, -4];
+    const el = widget.element || widget.inputEl;
+    if (el && el.style) el.style.display = "none";
+}
+
+function makeButton(label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.style.cssText =
+        "min-height:44px;padding:0 12px;font-size:16px;border-radius:10px;border:1px solid #555;background:#2c2c2e;" +
+        "color:#eee;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+    return button;
 }
 
 const clamp = (value, low, high) => Math.min(Math.max(value, low), Math.max(low, high));
@@ -382,8 +401,47 @@ app.registerExtension({
                 const value = origImageCallback ? origImageCallback.apply(this, arguments) : undefined;
                 resetCrop();
                 loadPreview();
+                showName();
                 return value;
             };
+
+            // The file is chosen on the picker screen (the same gallery as Image Picker: subfolders, search,
+            // sorting), so the string widget itself stays out of sight.
+            hideWidget(imageWidget);
+            const nameEl = document.createElement("div");
+            nameEl.style.cssText = "font-size:12px;opacity:.8;text-align:center;word-break:break-all;min-height:16px;";
+            function showName() {
+                nameEl.textContent = imageWidget.value || "No image selected";
+            }
+            function setImage(path, force = false) {
+                if (path === imageWidget.value && !force) return; // the same file keeps its crop
+                imageWidget.value = path;
+                if (imageWidget.callback) imageWidget.callback(path); // resets the crop (a new file) and loads the preview
+                showName();
+            }
+            function openPicker() {
+                openImageGallery({
+                    current: imageWidget.value || "",
+                    title: "Choose an image",
+                    onSelect: setImage,
+                });
+            }
+            // ◀ / ▶: the neighbour in the same folder, in the order the gallery's sort menu last had;
+            // taps queue up so a second one starts from where the first ended
+            let stepping = Promise.resolve();
+            function step(direction) {
+                stepping = stepping.then(async () => {
+                    try {
+                        const { subfolder } = splitPath(imageWidget.value || "");
+                        const paths = sortFiles((await fetchListing(subfolder)).files).map((file) => joinPath(subfolder, file.name));
+                        if (!paths.length) return;
+                        const index = paths.indexOf(imageWidget.value || "");
+                        setImage(paths[index < 0 ? 0 : (index + direction + paths.length) % paths.length]);
+                    } catch (e) {
+                        infoEl.textContent = "could not list the folder: " + e.message;
+                    }
+                });
+            }
 
             async function uploadFile(file) {
                 try {
@@ -397,11 +455,7 @@ app.registerExtension({
                     }
                     const data = await resp.json();
                     const name = data.subfolder ? data.subfolder + "/" + data.name : data.name;
-                    const values = (imageWidget.options && imageWidget.options.values) || [];
-                    if (!values.includes(name)) values.push(name);
-                    imageWidget.value = name;
-                    resetCrop();
-                    loadPreview();
+                    setImage(name, true); // an upload may have replaced a file of the same name
                 } catch (e) {
                     console.error("smart_load_image upload failed:", e);
                     infoEl.textContent = "upload failed (network error)";
@@ -482,7 +536,23 @@ app.registerExtension({
                 return value;
             };
 
-            const uploadButton = node.addWidget("button", "📁 Upload image", null, () => fileInput.click());
+            const chooser = document.createElement("div");
+            chooser.style.cssText = "display:flex;flex-direction:column;gap:4px;width:100%;box-sizing:border-box;";
+            const chooserRow = document.createElement("div");
+            chooserRow.style.cssText = "display:flex;gap:6px;";
+            const prevButton = makeButton("◀");
+            const chooseButton = makeButton("🖼 Choose image");
+            chooseButton.style.flex = "1";
+            const nextButton = makeButton("▶");
+            const uploadButton = makeButton("＋");
+            uploadButton.title = "Upload an image";
+            chooserRow.append(prevButton, chooseButton, nextButton, uploadButton);
+            chooser.append(nameEl, chooserRow);
+            prevButton.addEventListener("click", () => step(-1));
+            nextButton.addEventListener("click", () => step(1));
+            chooseButton.addEventListener("click", openPicker);
+            uploadButton.addEventListener("click", () => fileInput.click());
+            showName();
             const domWidget = node.addDOMWidget("smart_load_image_stage", "stage", stage, {
                 serialize: false,
                 getMinHeight: () => 220,
@@ -501,12 +571,18 @@ app.registerExtension({
             });
             node.addDOMWidget("smart_load_image_info", "info", infoEl, { serialize: false, getMinHeight: () => 18 });
 
-            // upload button right under the file combo, the editor after the numbers
-            const imageIndex = node.widgets.indexOf(imageWidget);
-            node.widgets.splice(node.widgets.indexOf(uploadButton), 1);
-            node.widgets.splice(imageIndex + 1, 0, uploadButton);
+            // The chooser row goes in the slot right after the file widget, where the upload button used to be:
+            // widgets_values are positional, so every saved workflow keeps loading. It is saved as an empty value
+            // there, like the other DOM widgets.
+            const chooserWidget = node.addDOMWidget("smart_load_image_chooser", "chooser", chooser, {
+                serialize: false,
+                getMinHeight: () => 72,
+            });
+            node.widgets.splice(node.widgets.indexOf(chooserWidget), 1);
+            node.widgets.splice(node.widgets.indexOf(imageWidget) + 1, 0, chooserWidget);
 
             node.smartLoadRefresh = () => {
+                showName();
                 loadPreview();
             };
             node.smartLoadSetServerSize = (text) => {

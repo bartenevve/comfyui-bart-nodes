@@ -1,8 +1,10 @@
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -10,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pack import module  # noqa: E402
 
 selection = module("smartload.selection")
+
+HAS_TORCH = importlib.util.find_spec("torch") is not None
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JS_FILE = os.path.join(ROOT, "js", "smart_load_image.js")
@@ -115,6 +119,48 @@ eq(ratioOf("original", 400, 200), 2, "ratio original");
 eq(ratioOf("free", 1, 1), null, "free");
 
 """
+
+
+@unittest.skipUnless(HAS_TORCH, "torch is needed")
+class TestNodeInput(unittest.TestCase):
+    """`image` is a plain string (the gallery picks from subfolders too), checked by VALIDATE_INPUTS."""
+
+    def setUp(self):
+        import torch  # noqa: F401  (before faking modules: restoring sys.modules must not unload it)
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = self.tmp.name
+
+        def annotated(name):
+            return os.path.abspath(os.path.join(base, name))
+
+        fake = types.ModuleType("folder_paths")
+        fake.get_input_directory = lambda: base
+        fake.get_annotated_filepath = annotated
+        fake.exists_annotated_filepath = lambda name: annotated(name).startswith(base + os.sep) and os.path.exists(annotated(name))
+        sys.modules["folder_paths"] = fake
+        self.addCleanup(sys.modules.pop, "folder_paths", None)
+        self.nodes = module("smartload.nodes")
+        os.makedirs(os.path.join(base, "trip"))
+        with open(os.path.join(base, "trip", "a.png"), "wb") as handle:
+            handle.write(b"x")
+
+    def test_image_is_a_string_not_a_list_of_files(self):
+        spec = self.nodes.SmartLoadImage.INPUT_TYPES()["required"]["image"]
+        self.assertEqual(spec[0], "STRING")
+
+    def test_a_file_in_a_subfolder_is_valid(self):
+        self.assertIs(self.nodes.SmartLoadImage.VALIDATE_INPUTS("trip/a.png"), True)
+
+    def test_empty_missing_folder_and_escaping_values_are_refused_with_a_message(self):
+        validate = self.nodes.SmartLoadImage.VALIDATE_INPUTS
+        for value in ("", "  ", "trip/nope.png", "trip", "../outside.png"):
+            result = validate(value)
+            self.assertIsInstance(result, str, value)
+
+    def test_a_linked_value_is_not_judged(self):
+        self.assertIs(self.nodes.SmartLoadImage.VALIDATE_INPUTS(None), True)
 
 
 if __name__ == "__main__":
